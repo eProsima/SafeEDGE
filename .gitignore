@@ -1,0 +1,19 @@
+# Local IDE / agent state
+.vscode/
+.claude/settings.local.json
+.codex
+**/.vscode/
+
+# Generic build/install outputs
+build/
+install/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+*.o
+*.a
+*.so
+*.d
+*.dep
