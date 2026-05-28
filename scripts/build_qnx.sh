@@ -31,7 +31,7 @@ EXTRA_BUILD_ARGS=()
 
 usage() {
     cat <<EOF
-Usage: bash scripts/build_qnx.sh [-i|--idl] [-- <extra build args>]
+Usage: bash build_qnx.sh [-i|--idl] [-- <extra build args>]
 
 Options:
   -i, --idl       regenerate safe_dds/idl from the shared idl/*.idl sources
@@ -203,7 +203,7 @@ fi
 
 if [[ ! -d "${SAFEDDS_DIR}" ]]; then
     echo "Safe DDS QNX install not found at '${SAFEDDS_DIR}'" >&2
-    echo "Build it first with: bash scripts/build_safedds_qnx.sh -- -j2" >&2
+    echo "Build it first with: bash build_safedds_qnx.sh -- -j2" >&2
     exit 1
 fi
 

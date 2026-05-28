@@ -14,7 +14,7 @@ LINUX_ONLY=0
 
 usage() {
     cat <<EOF
-Usage: bash scripts/check_setup.sh [--linux-only]
+Usage: bash check_setup.sh [--linux-only]
 
 Options:
   --linux-only   check only Linux/common_server prerequisites
@@ -41,7 +41,7 @@ require_cmd() {
     local cmd="$1"
     if ! command -v "${cmd}" >/dev/null 2>&1; then
         echo "Missing command: ${cmd}" >&2
-        echo "For Ubuntu/Debian host packages, run: bash scripts/install_host_deps.sh" >&2
+        echo "For Ubuntu/Debian host packages, run: bash install_host_deps.sh" >&2
         return 1
     fi
 }
@@ -119,7 +119,7 @@ require_path "${SAFE_DDS_PATH}"
 
 if [[ ! -d "${WORKSPACE_ROOT}/qnx/install/safedds-qnx8-${QNX_ARCH}/safedds" ]]; then
     echo "Safe DDS QNX install not found yet."
-    echo "Build it with: bash scripts/build_safedds_qnx.sh -- -j2"
+    echo "Build it with: bash build_safedds_qnx.sh -- -j2"
 fi
 
 echo "Setup check completed."

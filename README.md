@@ -5,12 +5,25 @@ It does not require the old `~/Safe/SAFE-EDGE` repository.
 
 It does not vendor third-party SDKs or source trees. QNX SDP 8 and Safe-DDS source code must be installed/provided outside this repository and pointed to with environment variables.
 
+## Running scripts
+
+All scripts live under `scripts/` and resolve paths relative to their own location.
+**Always run them from inside the `scripts/` directory:**
+
+```bash
+cd scripts
+bash <script_name>.sh [options]
+```
+
+They also work when invoked from the repository root with a prefix (`bash scripts/<name>.sh`), but the canonical form is from inside `scripts/`.
+
 ## Customer Quick Start
 
 For Ubuntu/Debian hosts, install the host packages that can be installed automatically:
 
 ```bash
-bash scripts/install_host_deps.sh
+cd scripts
+bash install_host_deps.sh
 ```
 
 Provide the two external inputs that are not stored in this repository:
@@ -27,25 +40,33 @@ export SAFE_DDS_PATH="/path/to/Safe-DDS-source-release"
 Check the environment:
 
 ```bash
-bash scripts/check_setup.sh
+bash check_setup.sh
 ```
 
-Build and test:
+Build and test (QNX):
 
 ```bash
-bash scripts/build_safedds_qnx.sh -- -j2
-bash scripts/build_qnx.sh -- -j2
-bash scripts/launch_tpi_2_3_test.sh
-bash scripts/launch_tpi_2_1_test.sh
-bash scripts/launch_tpi_2_2_test.sh
+bash build_safedds_qnx.sh -- -j2
+bash build_qnx.sh -- -j2
+bash launch_tpi_2_3_test.sh
+bash launch_tpi_2_1_test.sh
+bash launch_tpi_2_2_test.sh
+```
+
+Build and test (FastDDS / Docker):
+
+```bash
+bash build_ubuntu.sh --tests
+bash launch_fast_server_test.sh
+bash launch_fast_edge_test.sh
 ```
 
 For Linux-only validation of the common server component:
 
 ```bash
-bash scripts/install_host_deps.sh --linux-only
-bash scripts/check_setup.sh --linux-only
-bash scripts/launch_tpi_2_3_test.sh
+bash install_host_deps.sh --linux-only
+bash check_setup.sh --linux-only
+bash launch_tpi_2_3_test.sh
 ```
 
 ## Repository Paths
@@ -55,6 +76,10 @@ bash scripts/launch_tpi_2_3_test.sh
 - Shared server code: `common_server/`
 - Safe DDS server: `safe_dds/server/`
 - Safe DDS edge: `safe_dds/edge/`
+- FastDDS server: `fast_dds/server/`
+- FastDDS edge: `fast_dds/edge/`
+- FastDDS generated headers: `fast_dds/idl/`
+- FastDDS Dockerfiles: `fast_dds/docker/`
 - QNX toolchain file: `qnx/toolchains/qnx8.cmake`
 - Safe DDS QNX build script: `scripts/build_safedds_qnx.sh`
 - Generated Safe DDS QNX package: `qnx/install/safedds-qnx8-x86_64/safedds`
@@ -112,6 +137,12 @@ The `misc_files` entries include QNX VM keys, `shadow`, and other local image fi
 - `brctl` from `bridge-utils`
 - `file`
 
+### Required to build and run FastDDS Docker tests
+
+- Docker
+
+FastDDS is provided by the base Docker image (`eprosima/vulcanexus:kilted-base`); no separate FastDDS installation is required on the host.
+
 ### Required to run the Linux test
 
 - `cmake`
@@ -141,19 +172,20 @@ export CMAKE_BUILD_TYPE="Release"
 Install Ubuntu/Debian host packages:
 
 ```bash
-bash scripts/install_host_deps.sh
+cd scripts
+bash install_host_deps.sh
 ```
 
 For only the Linux test dependencies:
 
 ```bash
-bash scripts/install_host_deps.sh --linux-only
+bash install_host_deps.sh --linux-only
 ```
 
 Run:
 
 ```bash
-bash scripts/check_setup.sh
+bash check_setup.sh
 ```
 
 What it does:
@@ -167,21 +199,24 @@ What it does:
 For a Linux-only check:
 
 ```bash
-bash scripts/check_setup.sh --linux-only
+bash check_setup.sh --linux-only
 ```
 
 ## Build
 
+### QNX targets
+
 Build and install Safe DDS for QNX if `qnx/install/safedds-qnx8-x86_64/safedds` is missing:
 
 ```bash
-bash scripts/build_safedds_qnx.sh -- -j2
+cd scripts
+bash build_safedds_qnx.sh -- -j2
 ```
 
 Build all QNX targets from this repository:
 
 ```bash
-bash scripts/build_qnx.sh -- -j2
+bash build_qnx.sh -- -j2
 ```
 
 This configures and installs:
@@ -196,40 +231,84 @@ Installed binaries end up in:
 - `safe_dds/install/server-qnx8-x86_64-Release/bin`
 - `safe_dds/install/edge-qnx8-x86_64-Release/bin`
 
+### FastDDS Docker images
+
+Build the runtime images:
+
+```bash
+cd scripts
+bash build_ubuntu.sh
+```
+
+Build runtime and test images:
+
+```bash
+bash build_ubuntu.sh --tests
+```
+
+Images produced:
+
+- `safe-edge-server:fast`
+- `safe-edge-edge:fast`
+- `safe-edge-server:fast-test` (with `--tests`)
+- `safe-edge-edge:fast-test` (with `--tests`)
+
 ## Test
+
+All test scripts log their output under `scripts/logs/`.
 
 ### KPI/TPI 2.3: Linux test
 
 ```bash
-bash scripts/launch_tpi_2_3_test.sh
+cd scripts
+bash launch_tpi_2_3_test.sh
 ```
 
-Log file:
-
-- `scripts/logs/launch_tpi_2_3.log`
+Log: `scripts/logs/launch_tpi_2_3.log`
 
 ### TPI 2.1: QNX server test
 
 ```bash
-bash scripts/launch_tpi_2_1_test.sh
+cd scripts
+bash launch_tpi_2_1_test.sh
 ```
 
-Log file:
-
-- `scripts/logs/launch_tpi_2_1.log`
+Log: `scripts/logs/launch_tpi_2_1.log`
 
 ### TPI 2.2: QNX edge test
 
 ```bash
-bash scripts/launch_tpi_2_2_test.sh
+cd scripts
+bash launch_tpi_2_2_test.sh
 ```
 
-Log file:
+Log: `scripts/logs/launch_tpi_2_2.log`
 
-- `scripts/logs/launch_tpi_2_2.log`
+### FastDDS server integration test
+
+```bash
+cd scripts
+bash launch_fast_server_test.sh
+```
+
+Log: `scripts/logs/launch_fast_server_test.log`
+
+Builds `safe-edge-server:fast-test` automatically if the image is not present.
+
+### FastDDS edge integration test
+
+```bash
+cd scripts
+bash launch_fast_edge_test.sh
+```
+
+Log: `scripts/logs/launch_fast_edge_test.log`
+
+Builds `safe-edge-edge:fast-test` automatically if the image is not present.
 
 ## Notes
 
 - The QNX tests rebuild the QEMU image from `qnx/targets/qemu-qnx800-x86_64`.
 - Generated target output is recreated under `qnx/targets/qemu-qnx800-x86_64/output/` and is ignored by git.
 - The Linux test may execute real Pilot Server checks if `/etc/safe-edge/server.ini` exists on the host.
+- The FastDDS Docker tests are self-contained: each test image spawns the component under test as a subprocess and communicates with it via DDS over the loopback interface.
