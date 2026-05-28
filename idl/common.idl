@@ -1,0 +1,44 @@
+module safe_edge {
+module common {
+
+struct Header
+{
+    string source;
+    unsigned long long timestamp_ms;
+    string trace_id;
+};
+
+struct GeoPoint
+{
+    double latitude;
+    double longitude;
+};
+
+enum HealthStatus
+{
+    HEALTH_UNKNOWN,
+    HEALTH_OK,
+    HEALTH_DEGRADED,
+    HEALTH_ERROR
+};
+
+struct ServiceHeartbeat
+{
+    Header header_st;
+    string service_name;
+    HealthStatus status;
+    string detail;
+};
+
+enum PolicyMode
+{
+    POLICY_UNKNOWN,
+    POLICY_NOMINAL,
+    POLICY_LOW_SOC,
+    POLICY_EDGE_AUTONOMOUS,
+    POLICY_DEGRADED_SERVER_DOWN,
+    POLICY_DEGRADED_COMPLETE
+};
+
+};
+};

@@ -1,0 +1,33 @@
+#include "common.idl"
+
+module safe_edge {
+module edge {
+
+struct VehicleEdgeSummary
+{
+    safe_edge::common::Header header;
+    float soc_pct;
+    safe_edge::common::PolicyMode current_mode;
+    safe_edge::common::HealthStatus vehicle_health;
+    boolean v2g_ready;
+};
+
+struct EnergyAdvisory
+{
+    safe_edge::common::Header header;
+    safe_edge::common::PolicyMode suggested_mode;
+    string advisory_reason;
+    long recommended_charger_id;
+    float target_soc_pct;
+};
+
+struct EdgeGatewayStatus
+{
+    safe_edge::common::Header header;
+    safe_edge::common::HealthStatus status;
+    unsigned long long last_server_sync_ms;
+    string detail;
+};
+
+};
+};

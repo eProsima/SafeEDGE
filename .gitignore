@@ -17,3 +17,11 @@ compile_commands.json
 *.so
 *.d
 *.dep
+*build*
+*install*
+*include*
+!*build*.sh
+
+# Generated QNX artifacts
+qnx/targets/*/output/
+scripts/logs/
