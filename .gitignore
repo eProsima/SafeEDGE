@@ -59,3 +59,9 @@ qnx/targets/qemu-qnx800-*/local/snippets/system_files.custom
 !fast_dds/**
 fast_dds/build/
 fast_dds/install/
+
+# SafeDDS component headers are source files, not generated build artifacts.
+!safe_dds/*/include/
+!safe_dds/*/include/**
+!common_server/include/
+!common_server/include/**
