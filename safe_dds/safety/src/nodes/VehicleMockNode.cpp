@@ -4,11 +4,23 @@
 
 #include <safedds/dds/Publisher.hpp>
 #include <safedds/dds/ReturnCode.hpp>
+<<<<<<< Updated upstream
 #include <safedds/dds/qos/DataWriterQos.hpp>
 #include <safedds/dds/qos/DomainParticipantQos.hpp>
 #include <safedds/dds/qos/PublisherQos.hpp>
 #include <safedds/dds/qos/TopicQos.hpp>
 #include <safedds/execution/TimePoint.hpp>
+=======
+#include <safedds/dds/SampleInfo.hpp>
+#include <safedds/dds/qos/DataReaderQos.hpp>
+#include <safedds/dds/qos/DataWriterQos.hpp>
+#include <safedds/dds/qos/DomainParticipantQos.hpp>
+#include <safedds/dds/qos/PublisherQos.hpp>
+#include <safedds/dds/qos/SubscriberQos.hpp>
+#include <safedds/dds/qos/TopicQos.hpp>
+#include <safedds/execution/TimePoint.hpp>
+#include <safedds/platform.hpp>
+>>>>>>> Stashed changes
 #include <safedds/transport.hpp>
 
 #include <cstdio>
@@ -20,7 +32,11 @@ namespace nodes {
 
 namespace {
 
+<<<<<<< Updated upstream
 constexpr eprosima::safedds::execution::TimePeriod TIMEOUT = {1, 0};
+=======
+constexpr eprosima::safedds::execution::TimePeriod TIMEOUT = {0, 250'000'000};
+>>>>>>> Stashed changes
 
 static constexpr const char* INPUT_FILE_PATH = "/data/safe-edge-stage2/input.txt";
 
@@ -123,11 +139,40 @@ void VehicleMockNode::ParticipantListener::on_publication_matched(
     }
 }
 
+<<<<<<< Updated upstream
+=======
+VehicleMockNode::PolicyDecisionListener::PolicyDecisionListener(
+        VehicleMockNode& owner)
+    : owner_(owner)
+{
+}
+
+void VehicleMockNode::PolicyDecisionListener::on_data_available(
+        eprosima::safedds::dds::DataReader&) noexcept
+{
+    const eprosima::safedds::execution::TimePoint t_rx =
+        eprosima::safedds::get_platform().get_current_timepoint();
+
+    safe_edge::internal::PolicyDecision sample{};
+    eprosima::safedds::dds::SampleInfo info{};
+
+    if (owner_.policy_decision_typed_->take_next_sample(sample, info)
+            == eprosima::safedds::dds::ReturnCode::OK && info.valid_data)
+    {
+        owner_.on_policy_decision_received(sample, t_rx);
+    }
+}
+
+>>>>>>> Stashed changes
 VehicleMockNode::VehicleMockNode(
         const common::RuntimeConfig& runtime_config)
     : runtime_config_(runtime_config)
     , header_factory_(runtime_config.source_name)
     , participant_listener_(*this)
+<<<<<<< Updated upstream
+=======
+    , policy_decision_listener_(*this)
+>>>>>>> Stashed changes
     , publish_timer_(TIMEOUT)
 {
 }
@@ -166,6 +211,10 @@ bool VehicleMockNode::initialize()
            register_types() &&
            create_topics() &&
            create_endpoints() &&
+<<<<<<< Updated upstream
+=======
+           create_subscriber() &&
+>>>>>>> Stashed changes
            enable_entities() &&
            create_executor();
 }
@@ -179,6 +228,13 @@ bool VehicleMockNode::create_participant()
         {127, 0, 0, 1},
         runtime_config_.participant_port);
 
+<<<<<<< Updated upstream
+=======
+    initial_peers_.add(eprosima::safedds::transport::Locator::from_ipv4({127, 0, 0, 1}, runtime_config_.initial_peer_port));
+    initial_peers_.add(eprosima::safedds::transport::Locator::from_ipv4({127, 0, 0, 1}, runtime_config_.initial_peer_port_2));
+    participant_qos.wire_protocol_qos().initial_peers = &initial_peers_;
+
+>>>>>>> Stashed changes
     participant_ = factory_.create_participant(
         runtime_config_.domain_id,
         participant_qos,
@@ -204,6 +260,17 @@ bool VehicleMockNode::register_types()
         return false;
     }
 
+<<<<<<< Updated upstream
+=======
+    if (eprosima::safedds::dds::ReturnCode::OK !=
+            policy_decision_type_support_.register_type(
+                *participant_, policy_decision_type_support_.get_type_name()))
+    {
+        std::cerr << "[vehicle_mock] Failed to register type: PolicyDecision" << std::endl;
+        return false;
+    }
+
+>>>>>>> Stashed changes
     return true;
 }
 
@@ -226,6 +293,25 @@ bool VehicleMockNode::create_topics()
         return false;
     }
 
+<<<<<<< Updated upstream
+=======
+    policy_decision_topic_name_ = eprosima::safedds::memory::container::StaticString256(
+        common::topic_names::policy_decision());
+
+    policy_decision_topic_ = participant_->create_topic(
+        policy_decision_topic_name_,
+        policy_decision_type_support_.get_type_name(),
+        topic_qos,
+        nullptr,
+        eprosima::safedds::dds::NONE_STATUS_MASK);
+
+    if (nullptr == policy_decision_topic_)
+    {
+        std::cerr << "[vehicle_mock] Failed to create topic: policy_decision" << std::endl;
+        return false;
+    }
+
+>>>>>>> Stashed changes
     return true;
 }
 
@@ -270,11 +356,59 @@ bool VehicleMockNode::create_endpoints()
     return true;
 }
 
+<<<<<<< Updated upstream
+=======
+bool VehicleMockNode::create_subscriber()
+{
+    eprosima::safedds::dds::SubscriberQos sub_qos{};
+    subscriber_ = participant_->create_subscriber(
+        sub_qos, nullptr, eprosima::safedds::dds::NONE_STATUS_MASK);
+
+    if (nullptr == subscriber_)
+    {
+        std::cerr << "[vehicle_mock] Failed to create subscriber" << std::endl;
+        return false;
+    }
+
+    eprosima::safedds::dds::DataReaderQos reader_qos{};
+    reader_qos.reliability().kind =
+        eprosima::safedds::dds::ReliabilityQosPolicyKind::BEST_EFFORT_RELIABILITY_QOS;
+
+    policy_decision_reader_ = subscriber_->create_datareader(
+        *policy_decision_topic_,
+        reader_qos,
+        &policy_decision_listener_,
+        eprosima::safedds::dds::DATA_AVAILABLE_STATUS);
+
+    if (nullptr == policy_decision_reader_)
+    {
+        std::cerr << "[vehicle_mock] Failed to create policy_decision datareader" << std::endl;
+        return false;
+    }
+
+    policy_decision_typed_ = eprosima::safedds::dds::TypedDataReader<
+        safe_edge::internal::PolicyDecisionTypeSupport>::downcast(*policy_decision_reader_);
+
+    if (nullptr == policy_decision_typed_)
+    {
+        std::cerr << "[vehicle_mock] Failed to downcast policy_decision reader" << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+>>>>>>> Stashed changes
 bool VehicleMockNode::enable_entities()
 {
     bool enabled = true;
     enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == publisher_->enable());
     enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == safety_input_frame_datawriter_->enable());
+<<<<<<< Updated upstream
+=======
+    enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == subscriber_->enable());
+    enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == policy_decision_reader_->enable());
+>>>>>>> Stashed changes
     enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == participant_->enable());
 
     if (!enabled)
@@ -322,6 +456,12 @@ void VehicleMockNode::publish_frame()
     last_frame_      = frame;
     have_last_frame_ = true;
 
+<<<<<<< Updated upstream
+=======
+    const eprosima::safedds::execution::TimePoint t_pub =
+        eprosima::safedds::get_platform().get_current_timepoint();
+
+>>>>>>> Stashed changes
     if (eprosima::safedds::dds::ReturnCode::OK !=
             safety_input_frame_writer_->write(frame, eprosima::safedds::dds::HANDLE_NIL))
     {
@@ -329,10 +469,29 @@ void VehicleMockNode::publish_frame()
     }
     else
     {
+<<<<<<< Updated upstream
         std::cout << "[vehicle_mock] Published SafetyInputFrame soc=" << frame.battery.soc_pct << std::endl;
     }
 }
 
+=======
+        std::cout << "[vehicle_mock] Published SafetyInputFrame"
+                  << " t_pub=" << t_pub.seconds << "." << t_pub.nanoseconds
+                  << " soc=" << frame.battery.soc_pct
+                  << " emergency_stop=" << frame.safety.emergency_stop << std::endl;
+    }
+}
+
+void VehicleMockNode::on_policy_decision_received(
+        const safe_edge::internal::PolicyDecision& decision,
+        const eprosima::safedds::execution::TimePoint& t_rx) noexcept
+{
+    std::cout << "[vehicle_mock] Received PolicyDecision"
+              << " t_rx_dec=" << t_rx.seconds << "." << t_rx.nanoseconds
+              << " mode=" << static_cast<int32_t>(decision.mode) << std::endl;
+}
+
+>>>>>>> Stashed changes
 void VehicleMockNode::republish_last_frame() noexcept
 {
     if (nullptr == safety_input_frame_writer_ || !have_last_frame_)

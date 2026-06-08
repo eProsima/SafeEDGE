@@ -14,6 +14,10 @@
 #include <safedds/dds/qos/SubscriberQos.hpp>
 #include <safedds/dds/qos/TopicQos.hpp>
 #include <safedds/execution/TimePoint.hpp>
+<<<<<<< Updated upstream
+=======
+#include <safedds/platform.hpp>
+>>>>>>> Stashed changes
 #include <safedds/transport.hpp>
 
 #include <iostream>
@@ -668,7 +672,15 @@ void PolicyEngineNode::publish_policy_decision()
         return;
     }
 
+<<<<<<< Updated upstream
     std::cout << "[policy_engine] Published PolicyDecision mode=" << static_cast<int32_t>(decision.mode)
+=======
+    const eprosima::safedds::execution::TimePoint t_dec =
+        eprosima::safedds::get_platform().get_current_timepoint();
+    std::cout << "[policy_engine] Published PolicyDecision"
+              << " t_dec=" << t_dec.seconds << "." << t_dec.nanoseconds
+              << " mode=" << static_cast<int32_t>(decision.mode)
+>>>>>>> Stashed changes
               << " allow_non_safety=" << decision.allow_non_safety
               << " allow_ota=" << decision.allow_ota
               << " reason=" << decision.reason << std::endl;
@@ -694,9 +706,20 @@ void PolicyEngineNode::publish_heartbeat()
 void PolicyEngineNode::on_safety_input_frame_received(
         const safe_edge::internal::SafetyInputFrame& frame)
 {
+<<<<<<< Updated upstream
     latest_safety_input_frame_ = frame;
     have_safety_input_frame_ = true;
     std::cout << "[policy_engine] Received SafetyInputFrame soc=" << frame.battery.soc_pct << std::endl;
+=======
+    const eprosima::safedds::execution::TimePoint t_rx =
+        eprosima::safedds::get_platform().get_current_timepoint();
+    latest_safety_input_frame_ = frame;
+    have_safety_input_frame_ = true;
+    std::cout << "[policy_engine] Received SafetyInputFrame"
+              << " t_rx=" << t_rx.seconds << "." << t_rx.nanoseconds
+              << " soc=" << frame.battery.soc_pct
+              << " emergency_stop=" << frame.safety.emergency_stop << std::endl;
+>>>>>>> Stashed changes
 
     if (frame.battery.soc_pct < 20.0F)
     {
