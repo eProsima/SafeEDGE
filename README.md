@@ -46,11 +46,13 @@ bash check_setup.sh
 Build and test (QNX):
 
 ```bash
+cd scripts
 bash build_safedds_qnx.sh -- -j2
-bash build_qnx.sh -- -j2
+bash build_qnx.sh --idl -- -j2
 bash launch_tpi_2_3_test.sh
 bash launch_tpi_2_1_test.sh
 bash launch_tpi_2_2_test.sh
+bash launch_tpi_2_5_test.sh
 ```
 
 Build and test (FastDDS / Docker):
@@ -76,6 +78,8 @@ bash launch_tpi_2_3_test.sh
 - Shared server code: `common_server/`
 - Safe DDS server: `safe_dds/server/`
 - Safe DDS edge: `safe_dds/edge/`
+- Safe DDS safety domain: `safe_dds/safety/`
+- Safe DDS non-safety domain: `safe_dds/non_safety/`
 - FastDDS server: `fast_dds/server/`
 - FastDDS edge: `fast_dds/edge/`
 - FastDDS generated headers: `fast_dds/idl/`
@@ -167,6 +171,20 @@ export QNX_ARCH="x86_64"
 export CMAKE_BUILD_TYPE="Release"
 ```
 
+## Pilot Server API Key
+
+Requests to the Pilot Server read the API key from `/etc/safe-edge/server.ini`.
+The key is not stored in this repository and should not be committed.
+
+Example file:
+
+```ini
+[pilot_server]
+api_key = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+```
+
+If the file does not exist, the real Pilot Server checks in the Linux test are skipped.
+
 ## Setup Check
 
 Install Ubuntu/Debian host packages:
@@ -219,17 +237,27 @@ Build all QNX targets from this repository:
 bash build_qnx.sh -- -j2
 ```
 
+If files under `idl/` changed, regenerate Safe DDS generated headers during the build:
+
+```bash
+bash build_qnx.sh --idl -- -j2
+```
+
 This configures and installs:
 
 - `common_server`
 - `safe_dds/server`
 - `safe_dds/edge`
+- `safe_dds/safety`
+- `safe_dds/non_safety`
 
 Installed binaries end up in:
 
 - `common_server/install/server-common-qnx8-x86_64-Release/bin`
 - `safe_dds/install/server-qnx8-x86_64-Release/bin`
 - `safe_dds/install/edge-qnx8-x86_64-Release/bin`
+- `safe_dds/install/safety-qnx8-x86_64-Release/bin`
+- `safe_dds/install/non-safety-qnx8-x86_64-Release/bin`
 
 ### FastDDS Docker images
 
@@ -283,6 +311,27 @@ bash launch_tpi_2_2_test.sh
 ```
 
 Log: `scripts/logs/launch_tpi_2_2.log`
+
+### TPI 2.5: QNX vehicle node smoke test
+
+```bash
+cd scripts
+bash launch_tpi_2_5_test.sh
+```
+
+This starts the SafeDDS safety and non-safety nodes on the QNX VM, verifies that all six processes stay alive during the smoke-test window, prints their logs, and stops the VM.
+
+The underlying launcher can also leave the nodes running for manual inspection:
+
+```bash
+cd scripts
+bash aux_vehicle_nodes.sh
+```
+
+Logs:
+
+- `scripts/logs/launch_tpi_2_5.log`
+- `scripts/logs/aux_vehicle_nodes.log`
 
 ### FastDDS server integration test
 

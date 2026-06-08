@@ -19,6 +19,10 @@ QNX_USER="${USER:-$(id -un)}"
 : "${SERVER_INSTALL_FOLDER:=${WORKSPACE_ROOT}/safe_dds/install/server-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}}"
 : "${EDGE_BUILD_FOLDER:=${WORKSPACE_ROOT}/safe_dds/build/edge-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}}"
 : "${EDGE_INSTALL_FOLDER:=${WORKSPACE_ROOT}/safe_dds/install/edge-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}}"
+: "${SAFETY_BUILD_FOLDER:=${WORKSPACE_ROOT}/safe_dds/build/safety-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}}"
+: "${SAFETY_INSTALL_FOLDER:=${WORKSPACE_ROOT}/safe_dds/install/safety-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}}"
+: "${NON_SAFETY_BUILD_FOLDER:=${WORKSPACE_ROOT}/safe_dds/build/non-safety-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}}"
+: "${NON_SAFETY_INSTALL_FOLDER:=${WORKSPACE_ROOT}/safe_dds/install/non-safety-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}}"
 : "${SAFE_DDS_IDL_GENERATOR:-}"
 : "${SAFE_DDS_IDL_GENERATOR_ARGS:-}"
 : "${SAFEDDS_DIR:=${WORKSPACE_ROOT}/qnx/install/safedds-qnx8-${QNX_ARCH}/safedds}"
@@ -49,6 +53,8 @@ The script always configures and builds:
   - common_server
   - safe_dds/server
   - safe_dds/edge
+  - safe_dds/safety
+  - safe_dds/non_safety
 
 If there are no source changes, CMake will skip recompilation internally.
 EOF
@@ -80,8 +86,16 @@ done
 find_idl_generator() {
     if [[ -n "${SAFE_DDS_IDL_GENERATOR:-}" ]]; then
         local generator_bin="${SAFE_DDS_IDL_GENERATOR%% *}"
-        if command -v "${generator_bin}" >/dev/null 2>&1; then
+        if [[ -x "${generator_bin}" ]] || command -v "${generator_bin}" >/dev/null 2>&1; then
             echo "${SAFE_DDS_IDL_GENERATOR}"
+            return 0
+        fi
+    fi
+
+    if [[ -n "${SAFE_DDS_PATH:-}" ]]; then
+        local safedds_source_generator="${SAFE_DDS_PATH}/code-gen/scripts/safeddsgen"
+        if [[ -x "${safedds_source_generator}" ]]; then
+            echo "${safedds_source_generator}"
             return 0
         fi
     fi
@@ -127,10 +141,10 @@ regenerate_idl() {
     echo "Regenerating Safe DDS IDL artifacts"
     echo "  source   : ${COMMON_IDL_SOURCE_DIR}"
     echo "  generated: ${SAFE_DDS_IDL_DIR}"
-    echo "  generator: ${generator} ${SAFE_DDS_IDL_GENERATOR_ARGS:-}"
+    echo "  generator: ${generator} -D . ${SAFE_DDS_IDL_GENERATOR_ARGS:-} *.idl"
 
     pushd "${SAFE_DDS_IDL_DIR}" >/dev/null
-    if ! bash -lc "${generator} ${SAFE_DDS_IDL_GENERATOR_ARGS:-}"; then
+    if ! bash -lc "${generator} -D . ${SAFE_DDS_IDL_GENERATOR_ARGS:-} *.idl"; then
         popd >/dev/null
         rm -f "${cleanup_links[@]}"
         exit 1
@@ -203,7 +217,7 @@ fi
 
 if [[ ! -d "${SAFEDDS_DIR}" ]]; then
     echo "Safe DDS QNX install not found at '${SAFEDDS_DIR}'" >&2
-    echo "Build it first with: bash build_safedds_qnx.sh -- -j2" >&2
+    echo "Build it first with: bash scripts/build_safedds_qnx.sh -- -j2" >&2
     exit 1
 fi
 
@@ -225,12 +239,23 @@ if (( REGEN_IDL )); then
     regenerate_idl
 fi
 
+if [[ -f "${COMMON_IDL_SOURCE_DIR}/internal.idl" && ! -f "${SAFE_DDS_IDL_DIR}/internal.hpp" ]]; then
+    echo "Generated Safe DDS IDL header missing: ${SAFE_DDS_IDL_DIR}/internal.hpp" >&2
+    echo "Regenerate IDL with: bash scripts/build_qnx.sh --idl" >&2
+    echo "If the generator is not in PATH, set SAFE_DDS_IDL_GENERATOR first." >&2
+    exit 1
+fi
+
 mkdir -p "${COMMON_SERVER_BUILD_FOLDER}" "${COMMON_SERVER_INSTALL_FOLDER}" \
          "${SERVER_BUILD_FOLDER}" "${SERVER_INSTALL_FOLDER}" \
-         "${EDGE_BUILD_FOLDER}" "${EDGE_INSTALL_FOLDER}"
+         "${EDGE_BUILD_FOLDER}" "${EDGE_INSTALL_FOLDER}" \
+         "${SAFETY_BUILD_FOLDER}" "${SAFETY_INSTALL_FOLDER}" \
+         "${NON_SAFETY_BUILD_FOLDER}" "${NON_SAFETY_INSTALL_FOLDER}"
 
 configure_and_build "${WORKSPACE_ROOT}/common_server" "${COMMON_SERVER_BUILD_FOLDER}" "${COMMON_SERVER_INSTALL_FOLDER}" "common_server"
 configure_and_build "${WORKSPACE_ROOT}/safe_dds/server" "${SERVER_BUILD_FOLDER}" "${SERVER_INSTALL_FOLDER}" "safe_dds/server"
 configure_and_build "${WORKSPACE_ROOT}/safe_dds/edge" "${EDGE_BUILD_FOLDER}" "${EDGE_INSTALL_FOLDER}" "safe_dds/edge"
+configure_and_build "${WORKSPACE_ROOT}/safe_dds/safety" "${SAFETY_BUILD_FOLDER}" "${SAFETY_INSTALL_FOLDER}" "safe_dds/safety"
+configure_and_build "${WORKSPACE_ROOT}/safe_dds/non_safety" "${NON_SAFETY_BUILD_FOLDER}" "${NON_SAFETY_INSTALL_FOLDER}" "safe_dds/non_safety"
 
 echo "All SafeEDGE QNX targets built successfully."
