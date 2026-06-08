@@ -123,8 +123,9 @@ public:
     void TearDown() override
     {
         std::cout << "[env] safe_edge_edge_gateway log:\n";
-        std::system((std::string("sh -c 'if [ -f ") + EDGE_LOG_FILE +
+        const int dump_rc = std::system((std::string("sh -c 'if [ -f ") + EDGE_LOG_FILE +
             " ]; then cat " + EDGE_LOG_FILE + "; else echo missing log; fi'").c_str());
+        (void)dump_rc;
         std::cout << "[env] Stopping safe_edge_edge_gateway...\n";
         const std::string stop_cmd =
             "sh -c '"
@@ -137,7 +138,8 @@ public:
             "fi; "
             "pkill -f safe_edge_edge_gateway 2>/dev/null || true"
             "'";
-        std::system(stop_cmd.c_str());
+        const int stop_rc = std::system(stop_cmd.c_str());
+        (void)stop_rc;
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 };

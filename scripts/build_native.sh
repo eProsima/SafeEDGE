@@ -4,28 +4,22 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-QNX_USER="${USER:-$(id -un)}"
-: "${QNX_SDP_ROOT:=/home/${QNX_USER}/qnx800}"
-: "${QNX_HOST:=${QNX_SDP_ROOT}/host/linux/x86_64}"
-: "${QNX_TARGET:=${QNX_SDP_ROOT}/target/qnx}"
-: "${QNX_ARCH:=x86_64}"
 : "${CMAKE_BUILD_TYPE:=Release}"
 : "${CMAKE_GENERATOR:=Unix Makefiles}"
-: "${QNX_COMMON_CXXFLAGS:=-D_QNX_SOURCE}"
-: "${QNX_TOOLCHAIN_FILE:=${WORKSPACE_ROOT}/qnx/toolchains/qnx8.cmake}"
-: "${COMMON_SERVER_BUILD_FOLDER:=${WORKSPACE_ROOT}/common_server/build/server-common-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}}"
-: "${COMMON_SERVER_INSTALL_FOLDER:=${WORKSPACE_ROOT}/common_server/install/server-common-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}}"
-: "${SERVER_BUILD_FOLDER:=${WORKSPACE_ROOT}/safe_dds/build/server-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}}"
-: "${SERVER_INSTALL_FOLDER:=${WORKSPACE_ROOT}/safe_dds/install/server-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}}"
-: "${EDGE_BUILD_FOLDER:=${WORKSPACE_ROOT}/safe_dds/build/edge-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}}"
-: "${EDGE_INSTALL_FOLDER:=${WORKSPACE_ROOT}/safe_dds/install/edge-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}}"
-: "${SAFETY_BUILD_FOLDER:=${WORKSPACE_ROOT}/safe_dds/build/safety-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}}"
-: "${SAFETY_INSTALL_FOLDER:=${WORKSPACE_ROOT}/safe_dds/install/safety-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}}"
-: "${NON_SAFETY_BUILD_FOLDER:=${WORKSPACE_ROOT}/safe_dds/build/non-safety-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}}"
-: "${NON_SAFETY_INSTALL_FOLDER:=${WORKSPACE_ROOT}/safe_dds/install/non-safety-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}}"
+: "${NATIVE_COMMON_CXXFLAGS:=}"
 : "${SAFE_DDS_IDL_GENERATOR:-}"
 : "${SAFE_DDS_IDL_GENERATOR_ARGS:-}"
-: "${SAFEDDS_DIR:=${WORKSPACE_ROOT}/qnx/install/safedds-qnx8-${QNX_ARCH}/safedds}"
+: "${SAFEDDS_DIR:=}"
+: "${COMMON_SERVER_BUILD_FOLDER:=${WORKSPACE_ROOT}/common_server/build/server-common-native-${CMAKE_BUILD_TYPE}}"
+: "${COMMON_SERVER_INSTALL_FOLDER:=${WORKSPACE_ROOT}/common_server/install/server-common-native-${CMAKE_BUILD_TYPE}}"
+: "${SERVER_BUILD_FOLDER:=${WORKSPACE_ROOT}/safe_dds/build/server-native-${CMAKE_BUILD_TYPE}}"
+: "${SERVER_INSTALL_FOLDER:=${WORKSPACE_ROOT}/safe_dds/install/server-native-${CMAKE_BUILD_TYPE}}"
+: "${EDGE_BUILD_FOLDER:=${WORKSPACE_ROOT}/safe_dds/build/edge-native-${CMAKE_BUILD_TYPE}}"
+: "${EDGE_INSTALL_FOLDER:=${WORKSPACE_ROOT}/safe_dds/install/edge-native-${CMAKE_BUILD_TYPE}}"
+: "${SAFETY_BUILD_FOLDER:=${WORKSPACE_ROOT}/safe_dds/build/safety-native-${CMAKE_BUILD_TYPE}}"
+: "${SAFETY_INSTALL_FOLDER:=${WORKSPACE_ROOT}/safe_dds/install/safety-native-${CMAKE_BUILD_TYPE}}"
+: "${NON_SAFETY_BUILD_FOLDER:=${WORKSPACE_ROOT}/safe_dds/build/non-safety-native-${CMAKE_BUILD_TYPE}}"
+: "${NON_SAFETY_INSTALL_FOLDER:=${WORKSPACE_ROOT}/safe_dds/install/non-safety-native-${CMAKE_BUILD_TYPE}}"
 
 COMMON_IDL_SOURCE_DIR="${WORKSPACE_ROOT}/idl"
 SAFE_DDS_IDL_DIR="${WORKSPACE_ROOT}/safe_dds/idl"
@@ -35,19 +29,19 @@ EXTRA_BUILD_ARGS=()
 
 usage() {
     cat <<EOF
-Usage: bash build_qnx.sh [-i|--idl] [-- <extra build args>]
+Usage: bash build_native.sh [-i|--idl] [-- <extra build args>]
+
+Builds the same CMake targets as build_qnx.sh, but natively for Ubuntu/Linux.
 
 Options:
   -i, --idl       regenerate safe_dds/idl from the shared idl/*.idl sources
   -h, --help      show this help message
 
 Environment variables:
-  SAFE_DDS_IDL_GENERATOR   command used to regenerate Safe DDS IDL artifacts
+  SAFEDDS_DIR                 path to the native Safe DDS CMake package
+  SAFE_DDS_IDL_GENERATOR      command used to regenerate Safe DDS IDL artifacts
   SAFE_DDS_IDL_GENERATOR_ARGS extra args appended to the IDL generator command
-  QNX_TOOLCHAIN_FILE       path to the QNX toolchain file
-  SAFEDDS_DIR              path to cross-compiled Safe DDS CMake package for QNX
-  QNX_ARCH                 x86_64 or aarch64le (default: x86_64)
-  CMAKE_BUILD_TYPE         CMake configuration type (default: Release)
+  CMAKE_BUILD_TYPE            CMake configuration type (default: Release)
 
 The script always configures and builds:
   - common_server
@@ -55,8 +49,6 @@ The script always configures and builds:
   - safe_dds/edge
   - safe_dds/safety
   - safe_dds/non_safety
-
-If there are no source changes, CMake will skip recompilation internally.
 EOF
 }
 
@@ -77,7 +69,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown option: $1" >&2
-            usage
+            usage >&2
             exit 1
             ;;
     esac
@@ -179,13 +171,15 @@ configure_and_build() {
         -B "${build_dir}"
         -G "${CMAKE_GENERATOR}"
         -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
-        -DCMAKE_TOOLCHAIN_FILE="${QNX_TOOLCHAIN_FILE}"
-        -DQNX_ARCH="${QNX_ARCH}"
-        -DCMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS:-${QNX_COMMON_CXXFLAGS}}"
         -DCMAKE_INSTALL_PREFIX="${install_dir}"
     )
 
-    cmake_args+=("-Dsafedds_DIR=${SAFEDDS_DIR}")
+    if [[ -n "${CMAKE_CXX_FLAGS:-${NATIVE_COMMON_CXXFLAGS}}" ]]; then
+        cmake_args+=("-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS:-${NATIVE_COMMON_CXXFLAGS}}")
+    fi
+    if [[ -n "${SAFEDDS_DIR:-}" ]]; then
+        cmake_args+=("-Dsafedds_DIR=${SAFEDDS_DIR}")
+    fi
     cmake_args+=("${extra_cmake_args[@]}")
 
     echo "Configuring ${name}"
@@ -197,30 +191,6 @@ configure_and_build() {
     echo -e "Finished building ${name}\n"
 }
 
-case "${QNX_ARCH}" in
-    x86_64|aarch64le) ;;
-    *)
-        echo "Unsupported QNX_ARCH='${QNX_ARCH}'. Use x86_64 or aarch64le." >&2
-        exit 1
-        ;;
-esac
-
-if [[ ! -d "${QNX_HOST}" || ! -d "${QNX_TARGET}" ]]; then
-    echo "QNX SDK paths not found. QNX_HOST='${QNX_HOST}', QNX_TARGET='${QNX_TARGET}'" >&2
-    exit 1
-fi
-
-if [[ ! -f "${QNX_TOOLCHAIN_FILE}" ]]; then
-    echo "QNX toolchain file not found. QNX_TOOLCHAIN_FILE='${QNX_TOOLCHAIN_FILE}'" >&2
-    exit 1
-fi
-
-if [[ ! -d "${SAFEDDS_DIR}" ]]; then
-    echo "Safe DDS QNX install not found at '${SAFEDDS_DIR}'" >&2
-    echo "Build it first with: bash scripts/build_safedds_qnx.sh -- -j2" >&2
-    exit 1
-fi
-
 if [[ ! -d "${COMMON_IDL_SOURCE_DIR}" ]]; then
     echo "Shared IDL source directory not found at '${COMMON_IDL_SOURCE_DIR}'" >&2
     exit 1
@@ -231,17 +201,13 @@ if [[ ! -d "${SAFE_DDS_IDL_DIR}" ]]; then
     exit 1
 fi
 
-export QNX_HOST
-export QNX_TARGET
-export PATH="${QNX_HOST}/usr/bin:${PATH}"
-
 if (( REGEN_IDL )); then
     regenerate_idl
 fi
 
 if [[ -f "${COMMON_IDL_SOURCE_DIR}/internal.idl" && ! -f "${SAFE_DDS_IDL_DIR}/internal.hpp" ]]; then
     echo "Generated Safe DDS IDL header missing: ${SAFE_DDS_IDL_DIR}/internal.hpp" >&2
-    echo "Regenerate IDL with: bash scripts/build_qnx.sh --idl" >&2
+    echo "Regenerate IDL with: bash scripts/build_native.sh --idl" >&2
     echo "If the generator is not in PATH, set SAFE_DDS_IDL_GENERATOR first." >&2
     exit 1
 fi
@@ -258,4 +224,4 @@ configure_and_build "${WORKSPACE_ROOT}/safe_dds/edge" "${EDGE_BUILD_FOLDER}" "${
 configure_and_build "${WORKSPACE_ROOT}/safe_dds/safety" "${SAFETY_BUILD_FOLDER}" "${SAFETY_INSTALL_FOLDER}" "safe_dds/safety"
 configure_and_build "${WORKSPACE_ROOT}/safe_dds/non_safety" "${NON_SAFETY_BUILD_FOLDER}" "${NON_SAFETY_INSTALL_FOLDER}" "safe_dds/non_safety"
 
-echo "All SafeEDGE QNX targets built successfully."
+echo "All SafeEDGE native targets built successfully."

@@ -16,10 +16,7 @@ struct RuntimeConfig
     uint32_t domain_id = 0U;
     uint16_t participant_port = 0U;
     uint16_t initial_peer_port = 0U;
-<<<<<<< Updated upstream
-=======
     uint16_t initial_peer_port_2 = 0U;
->>>>>>> Stashed changes
 };
 
 RuntimeConfig make_safety_io_adapters_runtime_config();

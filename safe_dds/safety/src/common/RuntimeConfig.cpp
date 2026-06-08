@@ -36,11 +36,8 @@ RuntimeConfig make_vehicle_mock_runtime_config()
     config.source_name = "vehicle_mock";
     config.domain_id = 0U;
     config.participant_port = 8003U;
-<<<<<<< Updated upstream
-=======
     config.initial_peer_port = 8001U;
     config.initial_peer_port_2 = 8002U;
->>>>>>> Stashed changes
     return config;
 }
 

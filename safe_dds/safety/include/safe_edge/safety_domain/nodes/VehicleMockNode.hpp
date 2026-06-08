@@ -6,22 +6,19 @@
 
 #include <internal.hpp>
 
-<<<<<<< Updated upstream
-=======
 #include <safedds/dds/DataReader.hpp>
 #include <safedds/dds/DataReaderListener.hpp>
->>>>>>> Stashed changes
+#include <safedds/dds/DataReader.hpp>
+#include <safedds/dds/DataReaderListener.hpp>
 #include <safedds/dds/DataWriter.hpp>
 #include <safedds/dds/DomainParticipant.hpp>
 #include <safedds/dds/DomainParticipantFactory.hpp>
 #include <safedds/dds/DomainParticipantListener.hpp>
 #include <safedds/dds/Publisher.hpp>
-<<<<<<< Updated upstream
 #include <safedds/dds/Topic.hpp>
 #include <safedds/dds/TypedDataWriter.hpp>
 #include <safedds/execution/Timer.hpp>
 #include <safedds/memory/container/StaticString.hpp>
-=======
 #include <safedds/dds/SampleInfo.hpp>
 #include <safedds/dds/Subscriber.hpp>
 #include <safedds/dds/Topic.hpp>
@@ -32,7 +29,6 @@
 #include <safedds/memory/container/StaticList.hpp>
 #include <safedds/memory/container/StaticString.hpp>
 #include <safedds/transport/Locator.hpp>
->>>>>>> Stashed changes
 
 #include <cstdint>
 
@@ -66,8 +62,6 @@ private:
         VehicleMockNode& owner_;
     };
 
-<<<<<<< Updated upstream
-=======
     class PolicyDecisionListener :
         public eprosima::safedds::dds::DataReaderListener
     {
@@ -83,39 +77,29 @@ private:
         VehicleMockNode& owner_;
     };
 
->>>>>>> Stashed changes
     bool initialize();
     bool create_participant();
     bool register_types();
     bool create_topics();
     bool create_endpoints();
-<<<<<<< Updated upstream
-=======
     bool create_subscriber();
->>>>>>> Stashed changes
     bool enable_entities();
     bool create_executor();
 
     void publish_frame();
     void republish_last_frame() noexcept;
-<<<<<<< Updated upstream
-=======
     void on_policy_decision_received(
             const safe_edge::internal::PolicyDecision& decision,
             const eprosima::safedds::execution::TimePoint& t_rx) noexcept;
->>>>>>> Stashed changes
 
     eprosima::safedds::dds::DomainParticipantFactory factory_;
     common::RuntimeConfig runtime_config_;
     common::HeaderFactory header_factory_;
 
     ParticipantListener participant_listener_;
-<<<<<<< Updated upstream
-=======
     PolicyDecisionListener policy_decision_listener_;
 
     eprosima::safedds::memory::container::StaticList<eprosima::safedds::transport::Locator, 2U> initial_peers_;
->>>>>>> Stashed changes
 
     safe_edge::internal::SafetyInputFrameTypeSupport safety_input_frame_type_support_;
     eprosima::safedds::dds::DomainParticipant* participant_ = nullptr;
@@ -132,8 +116,6 @@ private:
 
     safe_edge::internal::SafetyInputFrame last_frame_{};
     bool have_last_frame_ = false;
-<<<<<<< Updated upstream
-=======
 
     safe_edge::internal::PolicyDecisionTypeSupport          policy_decision_type_support_;
     eprosima::safedds::dds::Subscriber*                     subscriber_                 = nullptr;
@@ -142,7 +124,6 @@ private:
     eprosima::safedds::dds::DataReader*                     policy_decision_reader_     = nullptr;
     eprosima::safedds::dds::TypedDataReader<
         safe_edge::internal::PolicyDecisionTypeSupport>*    policy_decision_typed_      = nullptr;
->>>>>>> Stashed changes
 };
 
 } // namespace nodes
