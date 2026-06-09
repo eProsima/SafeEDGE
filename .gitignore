@@ -53,6 +53,29 @@ qnx/targets/qemu-qnx800-*/local/snippets/ifs_start.custom
 qnx/targets/qemu-qnx800-*/local/snippets/post_start.custom
 qnx/targets/qemu-qnx800-*/local/snippets/system_files.custom
 
+# Hypervisor host launcher-generated snippets — suppress even though qemu-qnx800-*
+# wildcard patterns above would otherwise re-include some of them.
+qnx/targets/qemu-qnx800-x86_64-hypervisor/local/snippets/data_files.custom
+
+# Hypervisor guest target — version only the minimal skeleton source.
+!qnx/targets/qvm-safe-edge-qnx800-x86_64/
+!qnx/targets/qvm-safe-edge-qnx800-x86_64/mkqnximage-wrapper.sh
+!qnx/targets/qvm-safe-edge-qnx800-x86_64/local/
+!qnx/targets/qvm-safe-edge-qnx800-x86_64/local/opt_defaults
+!qnx/targets/qvm-safe-edge-qnx800-x86_64/local/opt_scripts
+!qnx/targets/qvm-safe-edge-qnx800-x86_64/local/options
+!qnx/targets/qvm-safe-edge-qnx800-x86_64/local/valgrind.files
+!qnx/targets/qvm-safe-edge-qnx800-x86_64/local/snippets/
+!qnx/targets/qvm-safe-edge-qnx800-x86_64/local/snippets/ifs_files.custom
+!qnx/targets/qvm-safe-edge-qnx800-x86_64/local/snippets/profile.custom
+qnx/targets/qvm-safe-edge-qnx800-x86_64/output/
+qnx/targets/qvm-safe-edge-qnx800-x86_64/local/misc_files/
+qnx/targets/qvm-safe-edge-qnx800-x86_64/local/ssh-ident
+qnx/targets/qvm-safe-edge-qnx800-x86_64/local/snippets/data_files.custom
+qnx/targets/qvm-safe-edge-qnx800-x86_64/local/snippets/ifs_start.custom
+qnx/targets/qvm-safe-edge-qnx800-x86_64/local/snippets/post_start.custom
+qnx/targets/qvm-safe-edge-qnx800-x86_64/local/snippets/system_files.custom
+
 # fast_dds/ FastDDS components — source and generated IDL files are intentionally versioned.
 # The broad patterns above (*include*, *build*, *install*) would otherwise hide them.
 !fast_dds/

@@ -55,6 +55,30 @@ bash launch_tpi_2_2_test.sh
 bash launch_tpi_2_5_test.sh
 ```
 
+## Hypervisor Path
+
+Launch vehicle-side nodes inside a QNX Hypervisor guest (Linux host → QNX host VM → QNX guest VM):
+
+```bash
+bash scripts/launch_hypervisor_nodes.sh
+```
+
+Stop the hypervisor host VM:
+
+```bash
+bash scripts/launch_hypervisor_nodes.sh --stop
+```
+
+Prerequisites: same host-side tools as the plain QEMU path. The launcher builds
+the guest image first and the host image second. `--no-rebuild` reuses existing
+artifacts.
+
+On successful launch, SSH access hints for host and guest are printed.
+
+What is committed vs generated:
+- Committed: `qnx/targets/qemu-qnx800-x86_64-hypervisor/` and `qnx/targets/qvm-safe-edge-qnx800-x86_64/` skeletons (`options`, wrappers, stable snippets)
+- Generated at runtime: `data_files.custom`, `system_files.custom`, `ifs_start.custom`, `post_start.custom`, `output/`
+
 Build and test (FastDDS / Docker):
 
 ```bash
