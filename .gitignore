@@ -68,6 +68,8 @@ qnx/targets/qemu-qnx800-x86_64-hypervisor/local/snippets/data_files.custom
 !qnx/targets/qvm-safe-edge-qnx800-x86_64/local/snippets/
 !qnx/targets/qvm-safe-edge-qnx800-x86_64/local/snippets/ifs_files.custom
 !qnx/targets/qvm-safe-edge-qnx800-x86_64/local/snippets/profile.custom
+!qnx/targets/qvm-safe-edge-qnx800-x86_64/local/variants/
+!qnx/targets/qvm-safe-edge-qnx800-x86_64/local/variants/**
 qnx/targets/qvm-safe-edge-qnx800-x86_64/output/
 qnx/targets/qvm-safe-edge-qnx800-x86_64/local/misc_files/
 qnx/targets/qvm-safe-edge-qnx800-x86_64/local/ssh-ident
