@@ -1,32 +1,146 @@
 # SafeEDGE
 
-This repository is self-contained for SafeEDGE source code, QNX target definitions, build scripts, and test launchers.
-It does not require the old `~/Safe/SAFE-EDGE` repository.
+## 1. Purpose
 
-It does not vendor third-party SDKs or source trees. QNX SDP 8 and Safe-DDS source code must be installed/provided outside this repository and pointed to with environment variables.
+SafeEDGE contains the source code, QNX target definitions, Docker packaging,
+build scripts, and test launchers required to build and run the current system
+from this repository alone.
 
-## Running scripts
+This repository does **not** vendor:
 
-All scripts live under `scripts/` and resolve paths relative to their own location.
-**Always run them from inside the `scripts/` directory:**
+- QNX SDP 8
+- Safe-DDS source tree
 
-```bash
-cd scripts
-bash <script_name>.sh [options]
+Those must exist outside the repository and be provided through environment
+variables.
+
+## 2. Repository Structure
+
+The most relevant repository areas are:
+
+- `common_server/`
+  Shared server-side code and tests used by the server path.
+- `fast_dds/`
+  Fast DDS based implementations, including:
+  - `fast_dds/server/`
+  - `fast_dds/edge/`
+  - `fast_dds/docker/`
+- `safe_dds/`
+  SafeDDS based implementations, including:
+  - `safe_dds/server/`
+  - `safe_dds/edge/`
+  - `safe_dds/safety/`
+  - `safe_dds/non_safety/`
+- `idl/`
+  Shared IDL definitions.
+- `qnx/`
+  QNX toolchains, targets, hypervisor artifacts, and guest definitions.
+- `scripts/`
+  Build scripts, launchers, test launchers, setup helpers, and utilities.
+
+Use `scripts/` for operational entry points, `qnx/` for QNX/hypervisor layout,
+`fast_dds/` for Docker/Fast DDS code, and `safe_dds/` for SafeDDS/QNX code.
+
+## 3. System Architecture and Endpoints
+
+### Runtime groups
+
+| Group | Runtime | Main process(es) |
+|---|---|---|
+| `server` | Docker container `safe-edge-server` | `safe_edge_server` |
+| `edge` | Docker container `safe-edge-edge` | `safe_edge_edge_gateway` |
+| `safety` | QNX guest VM | `safe_edge_vehicle_mock`, `safe_edge_safety_io_adapters`, `safe_edge_policy_engine` |
+| `non-safety` | QNX guest VM | `safe_edge_cloud_gateway`, `safe_edge_ota_service`, `safe_edge_infotainment` |
+
+### High-level topology
+
+```text
+Host Linux (virbr0, typically 192.168.122.1)
+├── Docker container: safe-edge-server   DDS port 8020
+├── Docker container: safe-edge-edge     DDS port 8030
+└── QNX Hypervisor host
+    ├── safety guest      192.168.10.2
+    │   ├── safety_io_adapters   8001
+    │   ├── policy_engine        8002
+    │   └── vehicle_mock         8003
+    └── non-safety guest  192.168.20.2
+        ├── cloud_gateway        8011
+        ├── ota_service          8012
+        └── infotainment         8013
 ```
 
-They also work when invoked from the repository root with a prefix (`bash scripts/<name>.sh`), but the canonical form is from inside `scripts/`.
+The QNX hypervisor host routes between:
 
-## Customer Quick Start
+- `192.168.10.0/24` safety guest subnet
+- `192.168.20.0/24` non-safety guest subnet
+- host Linux bridge subnet, typically `192.168.122.0/24`
 
-For Ubuntu/Debian hosts, install the host packages that can be installed automatically:
+### Interfaces and endpoints
+
+- Docker services run with `--network host`
+- `server` participates on the host network stack at DDS participant port `8020`
+- `edge` participates on the host network stack at DDS participant port `8030`
+- safety guest IP: `192.168.10.2`
+- non-safety guest IP: `192.168.20.2`
+- SSH access to both guests is part of the normal operational flow
+
+### Current discovery configuration
+
+The current launcher-driven DDS discovery topology is:
+
+| Group | Current initial peers |
+|---|---|
+| `server` | `non-safety:8011`, `host:8030` |
+| `edge` | `safety:8001`, `safety:8002`, `non-safety:8011`, `host:8020` |
+| `safety` | `safety:8001,8002`, `non-safety:8011`, `host:8020,8030` |
+| `non-safety` | `non-safety:8011,8012`, `safety:8001,8002`, `host:8020,8030` |
+
+This is the current discovery setup, not a protocol-level guarantee.
+
+## 4. Prerequisites
+
+### QNX / Safe-DDS
+
+Required to build QNX artifacts:
+
+- QNX SDP 8 installed on the host
+- Safe-DDS source tree available on the host
+- `QNX_SDP_ROOT` exported or available at `/home/$USER/qnx800`
+- `SAFE_DDS_PATH` exported and pointing to the Safe-DDS source tree
+
+### Host tools
+
+- `cmake`
+- host C/C++ toolchain
+- `docker`
+- `qemu-system-x86_64`
+- `sshpass`
+- `bridge-utils` (`brctl`)
+- `file`
+
+### Linux development packages
+
+- `libcurl` development package for Linux-side builds/tests
+
+Ubuntu/Debian:
 
 ```bash
-cd scripts
-bash install_host_deps.sh
+sudo apt install libcurl4-openssl-dev
 ```
 
-Provide the two external inputs that are not stored in this repository:
+### Helper script
+
+Install what the repository can install automatically:
+
+```bash
+bash scripts/install_host_deps.sh
+```
+
+This helper does **not** install QNX SDP or Safe-DDS.
+
+## 5. Configuration
+
+### Required build environment
 
 ```bash
 export QNX_SDP_ROOT="/path/to/qnx800"
@@ -35,353 +149,336 @@ export QNX_TARGET="$QNX_SDP_ROOT/target/qnx"
 export SAFE_DDS_PATH="/path/to/Safe-DDS-source-release"
 ```
 
-`scripts/env.example` contains the same variables as a source-able template.
-
-Check the environment:
+An example template is available at:
 
 ```bash
-bash check_setup.sh
+scripts/env.example
 ```
 
-Build and test (QNX):
+Validate the environment:
 
 ```bash
-cd scripts
-bash build_safedds_qnx.sh -- -j2
-bash build_qnx.sh --idl -- -j2
-bash launch_tpi_2_3_test.sh
-bash launch_tpi_2_1_test.sh
-bash launch_tpi_2_2_test.sh
-bash launch_tpi_2_5_test.sh
+bash scripts/check_setup.sh
 ```
 
-## Hypervisor Path
+### Runtime topology variables
 
-Launch vehicle-side nodes inside a QNX Hypervisor guest (Linux host → QNX host VM → QNX guest VM):
+The integrated stack currently relies mainly on:
+
+```bash
+# Host-side announced IP, usually detected from virbr0
+SAFE_EDGE_OWN_IP=192.168.122.1
+
+# Fixed guest IPs in the current split hypervisor topology
+SAFE_EDGE_SAFETY_IP=192.168.10.2
+SAFE_EDGE_NON_SAFETY_IP=192.168.20.2
+
+# Explicit DDS discovery peers
+SAFE_EDGE_INITIAL_PEERS=192.168.10.2:8001,192.168.20.2:8011,192.168.122.1:8020
+```
+
+Depending on binary family and launcher path, backward-compatible fallback
+variables may still exist, but the current integrated stack is driven primarily
+by:
+
+- `SAFE_EDGE_OWN_IP`
+- `SAFE_EDGE_INITIAL_PEERS`
+
+### Pilot server API key
+
+The server-side Pilot client does **not** take the API key from an environment
+variable and it is not hardcoded in the source tree.
+
+Both the Fast DDS server and the SafeDDS server read it from:
+
+```bash
+/etc/safe-edge/server.ini
+```
+
+Expected format:
+
+```ini
+[pilot_server]
+api_key = <your_api_key>
+```
+
+Notes:
+
+- the key must live under the `[pilot_server]` section
+- if the file is missing, server code that talks to the Pilot backend will log:
+  `Cannot open config file: /etc/safe-edge/server.ini`
+- some real Pilot backend tests are skipped automatically when that file is not
+  present
+
+## 6. Build
+
+### Docker / Fast DDS side
+
+```bash
+bash scripts/build_ubuntu.sh
+```
+
+### QNX side
+
+```bash
+bash scripts/build_qnx.sh --idl -- -j2
+```
+
+### SafeDDS QNX package only
+
+```bash
+bash scripts/build_safedds_qnx.sh
+```
+
+### Recommended full build sequence
+
+```bash
+bash scripts/build_ubuntu.sh
+bash scripts/build_qnx.sh --idl -- -j2
+```
+
+## 7. Launchers
+
+Run all scripts from the repository root:
+
+```bash
+bash scripts/<script_name>.sh [options]
+```
+
+### Launcher overview
+
+| Goal | Script | Notes |
+|---|---|---|
+| Launch full integrated stack | `scripts/launch_all.sh` | Main current end-to-end launcher |
+| Stop full integrated stack | `scripts/launch_all.sh --stop` | Stops Docker services and split hypervisor stack |
+| Launch Docker server service | `scripts/launch_fast_server.sh` | Service mode by default |
+| Launch Docker edge service | `scripts/launch_fast_edge.sh` | Service mode by default |
+| Run Fast DDS server integration test | `scripts/launch_fast_server.sh --test` | Docker test mode |
+| Run Fast DDS edge integration test | `scripts/launch_fast_edge.sh --test` | Docker test mode |
+| Launch split QNX hypervisor stack | `scripts/launch_hypervisor_split.sh` | Safety guest + non-safety guest |
+| Stop split QNX hypervisor stack | `scripts/launch_hypervisor_split.sh --stop` | Stops hypervisor/QNX split flow |
+| Launch single-guest QNX baseline | `scripts/launch_hypervisor_nodes.sh` | Alternative/baseline launcher |
+| Run all wired tests | `scripts/launch_tests.sh` | Aggregates Docker tests and TPI launchers |
+
+### Full stack launcher
+
+```bash
+bash scripts/launch_all.sh [--no-rebuild]
+```
+
+`launch_all.sh`:
+
+1. stops previous SafeEDGE instances
+2. optionally rebuilds Docker and QNX artifacts
+3. starts the split hypervisor guests
+4. starts Docker `server` and `edge`
+5. verifies DDS connectivity across all groups
+
+### Hypervisor launchers
+
+Split deployment:
+
+```bash
+bash scripts/launch_hypervisor_split.sh
+bash scripts/launch_hypervisor_split.sh --no-rebuild
+bash scripts/launch_hypervisor_split.sh --stop
+```
+
+Single-guest baseline:
 
 ```bash
 bash scripts/launch_hypervisor_nodes.sh
 ```
 
-Stop the hypervisor host VM:
+## 8. Tests
+
+### Run all tests
 
 ```bash
-bash scripts/launch_hypervisor_nodes.sh --stop
+bash scripts/launch_tests.sh
+bash scripts/launch_tests.sh --no-rebuild
 ```
 
-Prerequisites: same host-side tools as the plain QEMU path. The launcher builds
-the guest image first and the host image second. `--no-rebuild` reuses existing
-artifacts.
+`launch_tests.sh` currently runs:
 
-On successful launch, SSH access hints for host and guest are printed.
+- `launch_fast_server.sh --test`
+- `launch_fast_edge.sh --test`
+- `launch_tpi_2_3_test.sh`
+- `launch_tpi_2_1_test.sh`
+- `launch_tpi_2_2_test.sh`
+- `launch_tpi_2_5_test.sh`
+- `launch_tpi_2_6_test.sh`
 
-What is committed vs generated:
-- Committed: `qnx/targets/qemu-qnx800-x86_64-hypervisor/` and `qnx/targets/qvm-safe-edge-qnx800-x86_64/` skeletons (`options`, wrappers, stable snippets)
-- Generated at runtime: `data_files.custom`, `system_files.custom`, `ifs_start.custom`, `post_start.custom`, `output/`
-
-Build and test (FastDDS / Docker):
+### Run individual test launchers
 
 ```bash
-bash build_ubuntu.sh --tests
-bash launch_fast_server_test.sh
-bash launch_fast_edge_test.sh
+bash scripts/launch_fast_server.sh --test
+bash scripts/launch_fast_edge.sh --test
+bash scripts/launch_tpi_2_1_test.sh
+bash scripts/launch_tpi_2_2_test.sh
+bash scripts/launch_tpi_2_3_test.sh
+bash scripts/launch_tpi_2_5_test.sh
+bash scripts/launch_tpi_2_6_test.sh
 ```
 
-For Linux-only validation of the common server component:
+### Test intent
+
+- Fast DDS launchers with `--test` run Docker integration tests
+- `launch_tpi_2_3_test.sh` exercises the Linux/common server path
+- the QNX TPI launchers exercise QNX VM and SafeDDS flows
+
+## 9. Logs and Observability
+
+### Docker service logs
 
 ```bash
-bash install_host_deps.sh --linux-only
-bash check_setup.sh --linux-only
-bash launch_tpi_2_3_test.sh
+docker logs -f safe-edge-server
+docker logs -f safe-edge-edge
 ```
 
-## Repository Paths
-
-- Shared IDL sources: `idl/`
-- Safe DDS generated headers: `safe_dds/idl/`
-- Shared server code: `common_server/`
-- Safe DDS server: `safe_dds/server/`
-- Safe DDS edge: `safe_dds/edge/`
-- Safe DDS safety domain: `safe_dds/safety/`
-- Safe DDS non-safety domain: `safe_dds/non_safety/`
-- FastDDS server: `fast_dds/server/`
-- FastDDS edge: `fast_dds/edge/`
-- FastDDS generated headers: `fast_dds/idl/`
-- FastDDS Dockerfiles: `fast_dds/docker/`
-- QNX toolchain file: `qnx/toolchains/qnx8.cmake`
-- Safe DDS QNX build script: `scripts/build_safedds_qnx.sh`
-- Generated Safe DDS QNX package: `qnx/install/safedds-qnx8-x86_64/safedds`
-- Bundled QNX QEMU target: `qnx/targets/qemu-qnx800-x86_64`
-- Scripts: `scripts/`
-- Test logs: `scripts/logs/`
-
-## Versioned QNX Assets
-
-These files are needed by the build and QNX test scripts and are intended to be kept in this repository:
-
-- `qnx/toolchains/qnx8.cmake`
-- `scripts/build_safedds_qnx.sh`
-- `qnx/targets/qemu-qnx800-x86_64/mkqnximage-wrapper.sh`
-- `qnx/targets/qemu-qnx800-x86_64/local/options`
-- `qnx/targets/qemu-qnx800-x86_64/local/valgrind.files`
-- stable snippets under `qnx/targets/qemu-qnx800-x86_64/local/snippets/`
-
-These files are generated and should not be committed:
-
-- `qnx/build/`
-- `qnx/install/`
-- `qnx/targets/qemu-qnx800-x86_64/output/`
-- `scripts/logs/`
-- `qnx/targets/qemu-qnx800-x86_64/local/misc_files/*`
-- `qnx/targets/qemu-qnx800-x86_64/local/ssh-ident`
-- `qnx/targets/qemu-qnx800-x86_64/local/snippets/ifs_start.custom`
-- `qnx/targets/qemu-qnx800-x86_64/local/snippets/post_start.custom`
-- `qnx/targets/qemu-qnx800-x86_64/local/snippets/system_files.custom`
-
-The `misc_files` entries include QNX VM keys, `shadow`, and other local image files. The three generated snippets above are rewritten by `launch_tpi_2_1_test.sh` and `launch_tpi_2_2_test.sh`.
-
-## External Prerequisites
-
-### Required to build QNX targets
-
-- QNX SDP 8 installed on the host
-- Safe-DDS source tree available on the host
-- `SAFE_DDS_PATH` exported and pointing to the Safe-DDS source tree
-- Default SDK path used by scripts if `QNX_SDP_ROOT` is not set: `/home/$USER/qnx800`
-- Required SDK files/directories:
-  - `$QNX_SDP_ROOT/qnxsdp-env.sh`
-  - `$QNX_SDP_ROOT/host/linux/x86_64`
-  - `$QNX_SDP_ROOT/target/qnx`
-- `cmake`
-- a C/C++ build toolchain usable by CMake on the host
-- Internet access during configure time if GTest is not already available locally
-
-`scripts/install_host_deps.sh` installs the host packages listed above where possible. It does not install QNX SDP 8 or Safe-DDS sources.
-
-### Required to run QNX VM tests
-
-- `qemu-system-x86_64`
-- `sshpass`
-- `brctl` from `bridge-utils`
-- `file`
-
-### Required to build and run FastDDS Docker tests
-
-- Docker
-
-FastDDS is provided by the base Docker image (`eprosima/vulcanexus:kilted-base`); no separate FastDDS installation is required on the host.
-
-### Required to run the Linux test
-
-- `cmake`
-- `libcurl` development package
-  - Ubuntu/Debian: `sudo apt install libcurl4-openssl-dev`
-
-## Environment Variables
-
-Required for QNX builds:
+### launch_all.sh logs
 
 ```bash
-export QNX_SDP_ROOT="/home/$USER/qnx800"
-export QNX_HOST="$QNX_SDP_ROOT/host/linux/x86_64"
-export QNX_TARGET="$QNX_SDP_ROOT/target/qnx"
-export SAFE_DDS_PATH="/path/to/Safe-DDS-source-release"
+tail -f /tmp/safe-edge-hypervisor.log
+tail -f /tmp/safe-edge-edge.log
+tail -f /tmp/safe-edge-server.log
 ```
 
-Optional variables:
+### QNX guest access
+
+After `launch_all.sh` or `launch_hypervisor_split.sh` succeeds:
 
 ```bash
-export QNX_ARCH="x86_64"
-export CMAKE_BUILD_TYPE="Release"
+ssh -o ControlPath=/tmp/ssh-guest-safety-ctl root@192.168.10.2
+ssh -o ControlPath=/tmp/ssh-guest-non-safety-ctl root@192.168.20.2
 ```
 
-## Pilot Server API Key
+### QNX guest logs
 
-Requests to the Pilot Server read the API key from `/etc/safe-edge/server.ini`.
-The key is not stored in this repository and should not be committed.
+Safety:
 
-Example file:
+```bash
+ssh -o ControlPath=/tmp/ssh-guest-safety-ctl root@192.168.10.2 \
+  'tail -f /data/safe-edge-safety/logs/*.log | grep -v "^==> .* <==$"'
+```
+
+Non-safety:
+
+```bash
+ssh -o ControlPath=/tmp/ssh-guest-non-safety-ctl root@192.168.20.2 \
+  'tail -f /data/safe-edge-non-safety/logs/*.log | grep -v "^==> .* <==$"'
+```
+
+### Test logs
+
+All test launchers write logs under:
+
+```bash
+scripts/logs/
+```
+
+## 10. Operational Flows
+
+### Build and launch everything
+
+```bash
+bash scripts/build_ubuntu.sh
+bash scripts/build_qnx.sh --idl -- -j2
+bash scripts/launch_all.sh --no-rebuild
+```
+
+### Run tests only
+
+```bash
+bash scripts/launch_tests.sh
+```
+
+### Stop the stack
+
+```bash
+bash scripts/launch_all.sh --stop
+```
+
+### Run one component only
+
+```bash
+bash scripts/launch_fast_server.sh
+bash scripts/launch_fast_edge.sh
+bash scripts/launch_hypervisor_split.sh
+```
+
+## 11. Troubleshooting
+
+### `Cannot open config file: /etc/safe-edge/server.ini`
+
+Likely cause:
+
+- missing Pilot server config file for server-side backend access
+
+First thing to check:
+
+- create or verify `/etc/safe-edge/server.ini`
+- ensure it contains:
 
 ```ini
 [pilot_server]
-api_key = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+api_key = <your_api_key>
 ```
 
-If the file does not exist, the real Pilot Server checks in the Linux test are skipped.
+### QNX build cannot start
 
-## Setup Check
+Likely cause:
 
-Install Ubuntu/Debian host packages:
+- missing or misconfigured `QNX_SDP_ROOT`
+- missing `SAFE_DDS_PATH`
+
+First thing to check:
 
 ```bash
-cd scripts
-bash install_host_deps.sh
+bash scripts/check_setup.sh
 ```
 
-For only the Linux test dependencies:
+### Guests do not come up
+
+Likely cause:
+
+- QNX image build issue
+- QEMU/hypervisor startup failure
+- missing host dependencies such as `qemu-system-x86_64` or `sshpass`
+
+First places to inspect:
+
+- `/tmp/safe-edge-hypervisor.log`
+- `bash scripts/check_setup.sh`
+
+### Docker services do not start
+
+Likely cause:
+
+- missing Docker image
+- Docker not running
+- bad runtime environment
+
+First places to inspect:
 
 ```bash
-bash install_host_deps.sh --linux-only
+docker logs safe-edge-server
+docker logs safe-edge-edge
 ```
 
-Run:
+### DDS connectivity does not converge
 
-```bash
-bash check_setup.sh
-```
+Likely cause:
 
-What it does:
+- incorrect runtime topology variables
+- guest routing issue
+- missing peer in current discovery configuration
 
-- checks for required host tools
-- validates the expected QNX SDK path
-- validates repo paths under `qnx/`
-- validates that `SAFE_DDS_PATH` is defined for QNX builds
-- reports local/generated QNX folders if they have not been created yet
+First places to inspect:
 
-For a Linux-only check:
-
-```bash
-bash check_setup.sh --linux-only
-```
-
-## Build
-
-### QNX targets
-
-Build and install Safe DDS for QNX if `qnx/install/safedds-qnx8-x86_64/safedds` is missing:
-
-```bash
-cd scripts
-bash build_safedds_qnx.sh -- -j2
-```
-
-Build all QNX targets from this repository:
-
-```bash
-bash build_qnx.sh -- -j2
-```
-
-If files under `idl/` changed, regenerate Safe DDS generated headers during the build:
-
-```bash
-bash build_qnx.sh --idl -- -j2
-```
-
-This configures and installs:
-
-- `common_server`
-- `safe_dds/server`
-- `safe_dds/edge`
-- `safe_dds/safety`
-- `safe_dds/non_safety`
-
-Installed binaries end up in:
-
-- `common_server/install/server-common-qnx8-x86_64-Release/bin`
-- `safe_dds/install/server-qnx8-x86_64-Release/bin`
-- `safe_dds/install/edge-qnx8-x86_64-Release/bin`
-- `safe_dds/install/safety-qnx8-x86_64-Release/bin`
-- `safe_dds/install/non-safety-qnx8-x86_64-Release/bin`
-
-### FastDDS Docker images
-
-Build the runtime images:
-
-```bash
-cd scripts
-bash build_ubuntu.sh
-```
-
-Build runtime and test images:
-
-```bash
-bash build_ubuntu.sh --tests
-```
-
-Images produced:
-
-- `safe-edge-server:fast`
-- `safe-edge-edge:fast`
-- `safe-edge-server:fast-test` (with `--tests`)
-- `safe-edge-edge:fast-test` (with `--tests`)
-
-## Test
-
-All test scripts log their output under `scripts/logs/`.
-
-### KPI/TPI 2.3: Linux test
-
-```bash
-cd scripts
-bash launch_tpi_2_3_test.sh
-```
-
-Log: `scripts/logs/launch_tpi_2_3.log`
-
-### TPI 2.1: QNX server test
-
-```bash
-cd scripts
-bash launch_tpi_2_1_test.sh
-```
-
-Log: `scripts/logs/launch_tpi_2_1.log`
-
-### TPI 2.2: QNX edge test
-
-```bash
-cd scripts
-bash launch_tpi_2_2_test.sh
-```
-
-Log: `scripts/logs/launch_tpi_2_2.log`
-
-### TPI 2.5: QNX vehicle node smoke test
-
-```bash
-cd scripts
-bash launch_tpi_2_5_test.sh
-```
-
-This starts the SafeDDS safety and non-safety nodes on the QNX VM, verifies that all six processes stay alive during the smoke-test window, prints their logs, and stops the VM.
-
-The underlying launcher can also leave the nodes running for manual inspection:
-
-```bash
-cd scripts
-bash aux_vehicle_nodes.sh
-```
-
-Logs:
-
-- `scripts/logs/launch_tpi_2_5.log`
-- `scripts/logs/aux_vehicle_nodes.log`
-
-### FastDDS server integration test
-
-```bash
-cd scripts
-bash launch_fast_server_test.sh
-```
-
-Log: `scripts/logs/launch_fast_server_test.log`
-
-Builds `safe-edge-server:fast-test` automatically if the image is not present.
-
-### FastDDS edge integration test
-
-```bash
-cd scripts
-bash launch_fast_edge_test.sh
-```
-
-Log: `scripts/logs/launch_fast_edge_test.log`
-
-Builds `safe-edge-edge:fast-test` automatically if the image is not present.
-
-## Notes
-
-- The QNX tests rebuild the QEMU image from `qnx/targets/qemu-qnx800-x86_64`.
-- Generated target output is recreated under `qnx/targets/qemu-qnx800-x86_64/output/` and is ignored by git.
-- The Linux test may execute real Pilot Server checks if `/etc/safe-edge/server.ini` exists on the host.
-- The FastDDS Docker tests are self-contained: each test image spawns the component under test as a subprocess and communicates with it via DDS over the loopback interface.
+- `bash scripts/launch_all.sh`
+- `/tmp/safe-edge-hypervisor.log`
+- `/tmp/safe-edge-server.log`
+- `/tmp/safe-edge-edge.log`
+- guest logs under `/data/safe-edge-safety/logs/` and
+  `/data/safe-edge-non-safety/logs/`
