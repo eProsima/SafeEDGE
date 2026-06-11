@@ -408,12 +408,16 @@ bool CloudGatewayNode::create_participant()
     eprosima::safedds::memory::container::StaticString256 participant_name(runtime_config_.participant_name.c_str());
     participant_qos.participant_name() = participant_name;
     participant_qos.wire_protocol_qos().announced_locator = eprosima::safedds::transport::Locator::from_ipv4(
-        {127, 0, 0, 1},
+        runtime_config_.own_ip,
         runtime_config_.participant_port);
     participant_qos.wire_protocol_qos().use_multicast_discovery = false;
     for (std::size_t i = 0U; i < runtime_config_.initial_peer_count; ++i)
     {
-        initial_peers_.add(eprosima::safedds::transport::Locator::from_ipv4({127, 0, 0, 1}, runtime_config_.initial_peer_ports[i]));
+        const auto& peer_ip =
+                (runtime_config_.initial_peer_ports[i] >= 8011U && runtime_config_.initial_peer_ports[i] <= 8013U) ?
+                runtime_config_.own_ip :
+                runtime_config_.cross_domain_peer_ip;
+        initial_peers_.add(eprosima::safedds::transport::Locator::from_ipv4(peer_ip, runtime_config_.initial_peer_ports[i]));
     }
     participant_qos.wire_protocol_qos().initial_peers = &initial_peers_;
 

@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <string>
 
+#include <safedds/transport/Locator.hpp>
+
 namespace safe_edge {
 namespace non_safety_domain {
 namespace common {
@@ -16,7 +18,9 @@ struct RuntimeConfig
     std::string source_name;
     uint32_t domain_id = 0U;
     uint16_t participant_port = 0U;
-    uint16_t initial_peer_ports[4] = {};
+    eprosima::safedds::transport::Locator::IPv4 own_ip = {127, 0, 0, 1};
+    eprosima::safedds::transport::Locator::IPv4 cross_domain_peer_ip = {127, 0, 0, 1};
+    uint16_t initial_peer_ports[5] = {};
     std::size_t initial_peer_count = 0U;
 };
 

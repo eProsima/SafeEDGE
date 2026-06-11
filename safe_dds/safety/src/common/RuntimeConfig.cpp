@@ -1,8 +1,62 @@
 #include <safe_edge/safety_domain/common/RuntimeConfig.hpp>
 
+#include <cstdlib>
+#include <sstream>
+
 namespace safe_edge {
 namespace safety_domain {
 namespace common {
+
+namespace {
+
+void resolve_ip_from_env(
+        const char* env_name,
+        eprosima::safedds::transport::Locator::IPv4& out,
+        const eprosima::safedds::transport::Locator::IPv4& fallback) noexcept
+{
+    out[0] = fallback[0];
+    out[1] = fallback[1];
+    out[2] = fallback[2];
+    out[3] = fallback[3];
+
+    const char* value = std::getenv(env_name);
+    if (nullptr == value || '\0' == value[0])
+    {
+        return;
+    }
+
+    std::stringstream ss(value);
+    int octet[4] = {};
+    char dot1 = '\0';
+    char dot2 = '\0';
+    char dot3 = '\0';
+    if (!(ss >> octet[0] >> dot1 >> octet[1] >> dot2 >> octet[2] >> dot3 >> octet[3]))
+    {
+        return;
+    }
+    if (dot1 != '.' || dot2 != '.' || dot3 != '.')
+    {
+        return;
+    }
+    for (int i = 0; i < 4; ++i)
+    {
+        if (octet[i] < 0 || octet[i] > 255)
+        {
+            return;
+        }
+        out[i] = static_cast<uint8_t>(octet[i]);
+    }
+}
+
+void populate_common_network_config(
+        RuntimeConfig& config) noexcept
+{
+    const eprosima::safedds::transport::Locator::IPv4 localhost = {127, 0, 0, 1};
+    resolve_ip_from_env("SAFE_EDGE_OWN_IP", config.own_ip, localhost);
+    resolve_ip_from_env("SAFE_EDGE_CROSS_DOMAIN_IP", config.cross_domain_peer_ip, localhost);
+}
+
+} // namespace
 
 RuntimeConfig make_safety_io_adapters_runtime_config()
 {
@@ -12,7 +66,9 @@ RuntimeConfig make_safety_io_adapters_runtime_config()
     config.source_name = "safety_io_adapters";
     config.domain_id = 0U;
     config.participant_port = 8001U;
-    config.initial_peer_port = 8002U;
+    populate_common_network_config(config);
+    config.initial_peer_ports[0] = 8002U;
+    config.initial_peer_count = 1U;
     return config;
 }
 
@@ -24,7 +80,10 @@ RuntimeConfig make_policy_engine_runtime_config()
     config.source_name = "policy_engine";
     config.domain_id = 0U;
     config.participant_port = 8002U;
-    config.initial_peer_port = 8001U;
+    populate_common_network_config(config);
+    config.initial_peer_ports[0] = 8001U;
+    config.initial_peer_ports[1] = 8011U;
+    config.initial_peer_count = 2U;
     return config;
 }
 
@@ -36,8 +95,10 @@ RuntimeConfig make_vehicle_mock_runtime_config()
     config.source_name = "vehicle_mock";
     config.domain_id = 0U;
     config.participant_port = 8003U;
-    config.initial_peer_port = 8001U;
-    config.initial_peer_port_2 = 8002U;
+    populate_common_network_config(config);
+    config.initial_peer_ports[0] = 8001U;
+    config.initial_peer_ports[1] = 8002U;
+    config.initial_peer_count = 2U;
     return config;
 }
 
