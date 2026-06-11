@@ -22,6 +22,8 @@ struct RuntimeConfig
     eprosima::safedds::transport::Locator::IPv4 cross_domain_peer_ip = {127, 0, 0, 1};
     uint16_t initial_peer_ports[5] = {};
     std::size_t initial_peer_count = 0U;
+    eprosima::safedds::transport::Locator initial_peer_locators[8] = {};
+    std::size_t initial_peer_locator_count = 0U;
 };
 
 RuntimeConfig make_cloud_gateway_runtime_config();

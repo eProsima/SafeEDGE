@@ -20,8 +20,11 @@ struct RuntimeConfig
     uint16_t participant_port = 0U;
     eprosima::safedds::transport::Locator::IPv4 own_ip = {127, 0, 0, 1};
     eprosima::safedds::transport::Locator::IPv4 cross_domain_peer_ip = {127, 0, 0, 1};
-    uint16_t initial_peer_ports[5] = {};
+    eprosima::safedds::transport::Locator::IPv4 host_ip = {127, 0, 0, 1};
+    uint16_t initial_peer_ports[7] = {};
     std::size_t initial_peer_count = 0U;
+    eprosima::safedds::transport::Locator initial_peer_locators[8] = {};
+    std::size_t initial_peer_locator_count = 0U;
 };
 
 RuntimeConfig make_safety_io_adapters_runtime_config();

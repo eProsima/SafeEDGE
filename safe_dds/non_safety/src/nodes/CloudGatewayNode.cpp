@@ -411,13 +411,24 @@ bool CloudGatewayNode::create_participant()
         runtime_config_.own_ip,
         runtime_config_.participant_port);
     participant_qos.wire_protocol_qos().use_multicast_discovery = false;
-    for (std::size_t i = 0U; i < runtime_config_.initial_peer_count; ++i)
+    if (runtime_config_.initial_peer_locator_count > 0U)
     {
-        const auto& peer_ip =
-                (runtime_config_.initial_peer_ports[i] >= 8011U && runtime_config_.initial_peer_ports[i] <= 8013U) ?
-                runtime_config_.own_ip :
-                runtime_config_.cross_domain_peer_ip;
-        initial_peers_.add(eprosima::safedds::transport::Locator::from_ipv4(peer_ip, runtime_config_.initial_peer_ports[i]));
+        for (std::size_t i = 0U; i < runtime_config_.initial_peer_locator_count; ++i)
+        {
+            initial_peers_.add(runtime_config_.initial_peer_locators[i]);
+        }
+    }
+    else
+    {
+        for (std::size_t i = 0U; i < runtime_config_.initial_peer_count; ++i)
+        {
+            const uint16_t port = runtime_config_.initial_peer_ports[i];
+            const auto& peer_ip =
+                    (port >= 8011U && port <= 8013U) ?
+                    runtime_config_.own_ip :
+                    runtime_config_.cross_domain_peer_ip;
+            initial_peers_.add(eprosima::safedds::transport::Locator::from_ipv4(peer_ip, port));
+        }
     }
     participant_qos.wire_protocol_qos().initial_peers = &initial_peers_;
 
