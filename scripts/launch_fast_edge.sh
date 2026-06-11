@@ -9,7 +9,7 @@ OPT_TEST=0
 
 usage() {
     cat <<EOF
-Usage: bash launch_fast_edge_test.sh [--test] [-h|--help]
+Usage: bash launch_fast_edge.sh [--test] [-h|--help]
 
 Without --test  Runs safe_edge_edge_gateway as a persistent DDS service.
                 Image: safe-edge-edge:fast
@@ -20,7 +20,7 @@ Without --test  Runs safe_edge_edge_gateway as a persistent DDS service.
 
 --test          Runs the FastDDS edge integration test (self-contained, loopback only).
                 Image: safe-edge-edge:fast-test
-                Log: scripts/logs/launch_fast_edge_test.log
+                Log: scripts/logs/launch_fast_edge.log
 EOF
 }
 
@@ -37,7 +37,7 @@ rm -f /dev/shm/fastdds_* /dev/shm/sem.fastdds_* 2>/dev/null || true
 
 if [[ "${OPT_TEST}" -eq 1 ]]; then
     IMAGE="safe-edge-edge:fast-test"
-    LOG_FILE="${LOG_DIR}/launch_fast_edge_test.log"
+    LOG_FILE="${LOG_DIR}/launch_fast_edge.log"
     mkdir -p "${LOG_DIR}"
 
     if ! docker image inspect "${IMAGE}" > /dev/null 2>&1; then

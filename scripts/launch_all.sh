@@ -129,8 +129,8 @@ ok "Guests are up."
 # ── 4. Start edge and server ──────────────────────────────────────────────────
 
 log "Starting edge and server..."
-SAFE_EDGE_INITIAL_PEERS="${SAFE_EDGE_INITIAL_PEERS_EDGE}"   bash "${SCRIPT_DIR}/launch_fast_edge_test.sh"   > "${EDGE_LOG}"   2>&1 &
-SAFE_EDGE_INITIAL_PEERS="${SAFE_EDGE_INITIAL_PEERS_SERVER}" bash "${SCRIPT_DIR}/launch_fast_server_test.sh" > "${SERVER_LOG}" 2>&1 &
+SAFE_EDGE_INITIAL_PEERS="${SAFE_EDGE_INITIAL_PEERS_EDGE}"   bash "${SCRIPT_DIR}/launch_fast_edge.sh"   > "${EDGE_LOG}"   2>&1 &
+SAFE_EDGE_INITIAL_PEERS="${SAFE_EDGE_INITIAL_PEERS_SERVER}" bash "${SCRIPT_DIR}/launch_fast_server.sh" > "${SERVER_LOG}" 2>&1 &
 
 # Wait for both named containers to be running.
 DEADLINE=$(( $(date +%s) + 30 ))
@@ -242,6 +242,12 @@ echo "  Edge       : ${EDGE_LOG}"
 echo "  Server     : ${SERVER_LOG}"
 echo "  Safety     : ssh -o ControlPath=${SAFETY_CTL} root@${SAFETY_IP}"
 echo "  Non-safety : ssh -o ControlPath=${NON_SAFETY_CTL} root@${NON_SAFETY_IP}"
+echo ""
+echo "Live log hints:"
+echo "  Server     : docker logs -f safe-edge-server"
+echo "  Edge       : docker logs -f safe-edge-edge"
+echo "  Safety     : ssh -o ControlPath=${SAFETY_CTL} root@${SAFETY_IP} 'tail -f /data/safe-edge-safety/logs/*.log | grep -v \"^==> .* <==$\"'"
+echo "  Non-safety : ssh -o ControlPath=${NON_SAFETY_CTL} root@${NON_SAFETY_IP} 'tail -f /data/safe-edge-non-safety/logs/*.log | grep -v \"^==> .* <==$\"'"
 [[ "${ALL_OK}" -eq 0 ]] && exit 1
 echo ""
 echo "Stop with: bash scripts/launch_all.sh --stop"
