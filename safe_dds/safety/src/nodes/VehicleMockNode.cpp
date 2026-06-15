@@ -21,6 +21,7 @@
 #include <safedds/transport.hpp>
 
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
 
 namespace safe_edge {
@@ -32,6 +33,12 @@ namespace {
 constexpr eprosima::safedds::execution::TimePeriod TIMEOUT = {0, 250'000'000};
 
 static constexpr const char* INPUT_FILE_PATH = "/data/safe-edge-stage2/input.txt";
+
+static const char* resolve_input_file_path() noexcept
+{
+    const char* override_path = std::getenv("SAFE_EDGE_INPUT_FILE");
+    return (nullptr != override_path && '\0' != override_path[0]) ? override_path : INPUT_FILE_PATH;
+}
 
 struct InputConfig
 {
@@ -59,7 +66,7 @@ static InputConfig read_input_file()
     cfg.braking_available    = true;
     cfg.steering_available   = true;
 
-    std::FILE* f = std::fopen(INPUT_FILE_PATH, "r");
+    std::FILE* f = std::fopen(resolve_input_file_path(), "r");
     if (nullptr != f)
     {
         char line[64];

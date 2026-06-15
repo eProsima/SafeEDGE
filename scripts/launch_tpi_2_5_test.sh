@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run TPI 2.5 smoke test for SafeDDS safety and non-safety QNX nodes.
+# Run TPI 2.5 smoke test for SafeDDS safety and non-safety nodes.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,6 +14,8 @@ QNX_USER="${USER:-$(id -un)}"
 : "${TARGET_DIR:=${WORKSPACE_ROOT}/qnx/targets/qemu-qnx800-${QNX_ARCH}}"
 : "${SAFETY_BIN_DIR:=${WORKSPACE_ROOT}/safe_dds/install/safety-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}/bin}"
 : "${NON_SAFETY_BIN_DIR:=${WORKSPACE_ROOT}/safe_dds/install/non-safety-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}/bin}"
+: "${SAFETY_NATIVE_BIN_DIR:=${WORKSPACE_ROOT}/safe_dds/install/safety-native-${CMAKE_BUILD_TYPE}/bin}"
+: "${NON_SAFETY_NATIVE_BIN_DIR:=${WORKSPACE_ROOT}/safe_dds/install/non-safety-native-${CMAKE_BUILD_TYPE}/bin}"
 : "${SMOKE_TEST_SECONDS:=10}"
 
 _SSH_PASS="root"
@@ -25,6 +27,11 @@ exec > >(tee "${LOG_FILE}") 2>&1
 
 OPT_NO_REBUILD=0
 OPT_STOP=0
+OPT_LINUX=0
+
+TEST_PLATFORM="qnx"
+RUNTIME_DIR="${LOG_DIR}/tpi_2_5_runtime"
+INPUT_FILE="${RUNTIME_DIR}/input.txt"
 
 VEHICLE_NODE_BINS=(
     safe_edge_safety_io_adapters
@@ -37,11 +44,13 @@ VEHICLE_NODE_BINS=(
 
 usage() {
     cat <<EOF
-Usage: bash scripts/launch_tpi_2_5_test.sh [--no-rebuild] [--stop] [--duration seconds]
+Usage: bash scripts/launch_tpi_2_5_test.sh [--no-rebuild] [--linux|--ubuntu] [--stop] [--duration seconds]
 
 Options:
   --duration seconds  smoke-test wait before collecting logs (default: ${SMOKE_TEST_SECONDS})
   --no-rebuild        skip image rebuild and reuse existing VM artifacts
+  --linux             run native Linux binaries instead of a QNX VM
+  --ubuntu            alias for --linux
   --stop              stop a running VM and exit
   -h, --help          show this help message
 
@@ -52,6 +61,8 @@ Environment variables:
   TARGET_DIR          mkqnximage target directory
   SAFETY_BIN_DIR      directory containing safety domain binaries
   NON_SAFETY_BIN_DIR  directory containing non-safety domain binaries
+  SAFETY_NATIVE_BIN_DIR      directory containing native safety domain binaries
+  NON_SAFETY_NATIVE_BIN_DIR  directory containing native non-safety domain binaries
   SMOKE_TEST_SECONDS  default smoke-test duration
 EOF
 }
@@ -70,6 +81,10 @@ while [[ $# -gt 0 ]]; do
             OPT_NO_REBUILD=1
             shift
             ;;
+        --linux|--ubuntu)
+            OPT_LINUX=1
+            shift
+            ;;
         --stop)
             OPT_STOP=1
             shift
@@ -86,35 +101,60 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ "${OPT_LINUX}" -eq 1 ]]; then
+    TEST_PLATFORM="linux"
+    SAFETY_BIN_DIR="${SAFETY_NATIVE_BIN_DIR}"
+    NON_SAFETY_BIN_DIR="${NON_SAFETY_NATIVE_BIN_DIR}"
+fi
+
 if [[ ! "${SMOKE_TEST_SECONDS}" =~ ^[0-9]+$ || "${SMOKE_TEST_SECONDS}" -eq 0 ]]; then
     echo "Invalid smoke-test duration: ${SMOKE_TEST_SECONDS}" >&2
     exit 1
 fi
 
-if [[ ! -f "${QNX_SDP_ROOT}/qnxsdp-env.sh" ]]; then
+_validate_linux_binary() {
+    local bin="$1"
+    local description
+
+    if ! description="$(file "${bin}")"; then
+        echo "Failed to inspect binary: ${bin}" >&2
+        return 1
+    fi
+
+    if ! grep -Fq "GNU/Linux" <<<"${description}"; then
+        echo "Binary does not look like a Linux executable:" >&2
+        echo "  ${description}" >&2
+        echo "Rebuild with: bash scripts/build_native.sh" >&2
+        return 1
+    fi
+}
+
+if [[ "${TEST_PLATFORM}" == "qnx" && ! -f "${QNX_SDP_ROOT}/qnxsdp-env.sh" ]]; then
     echo "QNX SDK not found at QNX_SDP_ROOT='${QNX_SDP_ROOT}'" >&2
     exit 1
 fi
 
-if [[ ! -d "${TARGET_DIR}" ]]; then
+if [[ "${TEST_PLATFORM}" == "qnx" && ! -d "${TARGET_DIR}" ]]; then
     echo "QNX target directory not found: ${TARGET_DIR}" >&2
     exit 1
 fi
 
-if ! command -v sshpass >/dev/null 2>&1; then
+if [[ "${TEST_PLATFORM}" == "qnx" ]] && ! command -v sshpass >/dev/null 2>&1; then
     echo "sshpass not found. Install with: sudo apt install sshpass" >&2
     exit 1
 fi
 
-# shellcheck source=/dev/null
-source "${QNX_SDP_ROOT}/qnxsdp-env.sh" >/dev/null 2>&1
+if [[ "${TEST_PLATFORM}" == "qnx" ]]; then
+    # shellcheck source=/dev/null
+    source "${QNX_SDP_ROOT}/qnxsdp-env.sh" >/dev/null 2>&1
+fi
 
-if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
+if [[ "${TEST_PLATFORM}" == "qnx" ]] && ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
     echo "qemu-system-x86_64 not found. Install with: sudo apt install qemu-system-x86" >&2
     exit 1
 fi
 
-if ! command -v brctl >/dev/null 2>&1; then
+if [[ "${TEST_PLATFORM}" == "qnx" ]] && ! command -v brctl >/dev/null 2>&1; then
     echo "brctl not found. Install with: sudo apt install bridge-utils" >&2
     exit 1
 fi
@@ -238,10 +278,18 @@ _validate_vehicle_binaries() {
         bin="$(_host_bin_path "${name}")"
         if [[ ! -f "${bin}" ]]; then
             echo "Binary not found: ${bin}" >&2
-            echo "Build with: bash scripts/build_qnx.sh" >&2
+            if [[ "${TEST_PLATFORM}" == "linux" ]]; then
+                echo "Build with: bash scripts/build_native.sh" >&2
+            else
+                echo "Build with: bash scripts/build_qnx.sh" >&2
+            fi
             exit 1
         fi
-        _validate_qnx_binary "${bin}"
+        if [[ "${TEST_PLATFORM}" == "linux" ]]; then
+            _validate_linux_binary "${bin}"
+        else
+            _validate_qnx_binary "${bin}"
+        fi
     done
 }
 
@@ -285,12 +333,20 @@ _reset_generated_target_output() {
 }
 
 _prepare_local_target_dirs() {
-    mkdir -p "${TARGET_DIR}/local/misc_files" "${TARGET_DIR}/local/snippets"
+    if [[ "${TEST_PLATFORM}" == "qnx" ]]; then
+        mkdir -p "${TARGET_DIR}/local/misc_files" "${TARGET_DIR}/local/snippets"
+    else
+        mkdir -p "${RUNTIME_DIR}"
+    fi
 }
 
 _remote_log_path_for_bin() {
     local bin="$1"
-    echo "/tmp/safe_edge_vehicle_nodes/${bin}.log"
+    if [[ "${TEST_PLATFORM}" == "linux" ]]; then
+        echo "${RUNTIME_DIR}/${bin}.log"
+    else
+        echo "/tmp/safe_edge_vehicle_nodes/${bin}.log"
+    fi
 }
 
 _escape_single_quotes() {
@@ -301,11 +357,18 @@ _escape_single_quotes() {
 _remote_pid_is_running() {
     local ip="$1"
     local bin="$2"
-    local pid_file="/tmp/safe_edge_vehicle_nodes/${bin}.pid"
+    local pid_file
     local escaped_pid_file
 
-    escaped_pid_file="$(_escape_single_quotes "${pid_file}")"
-    _ssh_run "${ip}" "test -f '${escaped_pid_file}' && pid=\$(cat '${escaped_pid_file}') && kill -0 \"\$pid\" 2>/dev/null" >/dev/null 2>&1
+    if [[ "${TEST_PLATFORM}" == "linux" ]]; then
+        pid_file="${RUNTIME_DIR}/${bin}.pid"
+        [[ -f "${pid_file}" ]] || return 1
+        kill -0 "$(cat "${pid_file}")" 2>/dev/null
+    else
+        pid_file="/tmp/safe_edge_vehicle_nodes/${bin}.pid"
+        escaped_pid_file="$(_escape_single_quotes "${pid_file}")"
+        _ssh_run "${ip}" "test -f '${escaped_pid_file}' && pid=\$(cat '${escaped_pid_file}') && kill -0 \"\$pid\" 2>/dev/null" >/dev/null 2>&1
+    fi
 }
 
 _remote_file_nonempty() {
@@ -313,8 +376,12 @@ _remote_file_nonempty() {
     local file="$2"
     local escaped_file
 
-    escaped_file="$(_escape_single_quotes "${file}")"
-    _ssh_run "${ip}" "test -s '${escaped_file}'" >/dev/null 2>&1
+    if [[ "${TEST_PLATFORM}" == "linux" ]]; then
+        [[ -s "${file}" ]]
+    else
+        escaped_file="$(_escape_single_quotes "${file}")"
+        _ssh_run "${ip}" "test -s '${escaped_file}'" >/dev/null 2>&1
+    fi
 }
 
 _remote_file_contains() {
@@ -323,9 +390,13 @@ _remote_file_contains() {
     local pattern="$3"
     local escaped_file escaped_pattern
 
-    escaped_file="$(_escape_single_quotes "${file}")"
-    escaped_pattern="$(_escape_single_quotes "${pattern}")"
-    _ssh_run "${ip}" "grep -Fq -- '${escaped_pattern}' '${escaped_file}'" >/dev/null 2>&1
+    if [[ "${TEST_PLATFORM}" == "linux" ]]; then
+        grep -Fq -- "${pattern}" "${file}" >/dev/null 2>&1
+    else
+        escaped_file="$(_escape_single_quotes "${file}")"
+        escaped_pattern="$(_escape_single_quotes "${pattern}")"
+        _ssh_run "${ip}" "grep -Fq -- '${escaped_pattern}' '${escaped_file}'" >/dev/null 2>&1
+    fi
 }
 
 _wait_for_remote_file_contains() {
@@ -351,14 +422,41 @@ _print_remote_log_tail() {
     local file="$2"
     local escaped_file
 
-    escaped_file="$(_escape_single_quotes "${file}")"
-    _ssh_run "${ip}" "if [ -f '${escaped_file}' ]; then echo '--- ${file} ---'; tail -40 '${escaped_file}'; fi" || true
+    if [[ "${TEST_PLATFORM}" == "linux" ]]; then
+        if [[ -f "${file}" ]]; then
+            echo "--- ${file} ---"
+            tail -40 "${file}"
+        fi
+    else
+        escaped_file="$(_escape_single_quotes "${file}")"
+        _ssh_run "${ip}" "if [ -f '${escaped_file}' ]; then echo '--- ${file} ---'; tail -40 '${escaped_file}'; fi" || true
+    fi
 }
 
 _start_vehicle_nodes() {
     local ip="$1"
     local cmd
     local name
+
+    if [[ "${TEST_PLATFORM}" == "linux" ]]; then
+        mkdir -p "${RUNTIME_DIR}"
+        printf "soc=50.0\nemergency_stop=0\nadas_fault=0\navailable_charge_kw=50.0\navailable_discharge_kw=50.0\nv2g_ready=1\nspeed_mps=0.0\nbraking_available=1\nsteering_available=1\n" > "${INPUT_FILE}"
+        rm -f "${RUNTIME_DIR}"/*.pid "${RUNTIME_DIR}"/*.log
+
+        "${NON_SAFETY_BIN_DIR}/safe_edge_infotainment" > "${RUNTIME_DIR}/safe_edge_infotainment.log" 2>&1 &
+        echo $! > "${RUNTIME_DIR}/safe_edge_infotainment.pid"
+        sleep 2
+        for name in "${VEHICLE_NODE_BINS[@]}"; do
+            [[ "${name}" == "safe_edge_infotainment" ]] && continue
+            if [[ "${name}" == "safe_edge_vehicle_mock" ]]; then
+                SAFE_EDGE_INPUT_FILE="${INPUT_FILE}" "${SAFETY_BIN_DIR}/${name}" > "${RUNTIME_DIR}/${name}.log" 2>&1 &
+            else
+                "$(_host_bin_path "${name}")" > "${RUNTIME_DIR}/${name}.log" 2>&1 &
+            fi
+            echo $! > "${RUNTIME_DIR}/${name}.pid"
+        done
+        return 0
+    fi
 
     cmd='set -e; mkdir -p /tmp/safe_edge_vehicle_nodes /data/safe-edge-stage2;'
     cmd+=' printf "soc=50.0\nemergency_stop=0\nadas_fault=0\navailable_charge_kw=50.0\navailable_discharge_kw=50.0\nv2g_ready=1\nspeed_mps=0.0\nbraking_available=1\nsteering_available=1\n" > /data/safe-edge-stage2/input.txt;'
@@ -375,16 +473,33 @@ _start_vehicle_nodes() {
 
 _stop_vehicle_nodes() {
     local ip="$1"
-    _ssh_run "${ip}" \
-        "for f in /tmp/safe_edge_vehicle_nodes/*.pid; do [ -f \"\$f\" ] || continue; pid=\$(cat \"\$f\"); kill \"\$pid\" 2>/dev/null || true; done" \
-        >/dev/null 2>&1 || true
+    local pid_file
+    if [[ "${TEST_PLATFORM}" == "linux" ]]; then
+        for pid_file in "${RUNTIME_DIR}"/*.pid; do
+            [[ -f "${pid_file}" ]] || continue
+            kill "$(cat "${pid_file}")" 2>/dev/null || true
+        done
+    else
+        _ssh_run "${ip}" \
+            "for f in /tmp/safe_edge_vehicle_nodes/*.pid; do [ -f \"\$f\" ] || continue; pid=\$(cat \"\$f\"); kill \"\$pid\" 2>/dev/null || true; done" \
+            >/dev/null 2>&1 || true
+    fi
 }
 
 _print_vehicle_node_logs() {
     local ip="$1"
-    _ssh_run "${ip}" \
-        "for f in /tmp/safe_edge_vehicle_nodes/*.log; do [ -f \"\$f\" ] || continue; echo \"--- \$f ---\"; tail -40 \"\$f\"; done" \
-        || true
+    local log_file
+    if [[ "${TEST_PLATFORM}" == "linux" ]]; then
+        for log_file in "${RUNTIME_DIR}"/*.log; do
+            [[ -f "${log_file}" ]] || continue
+            echo "--- ${log_file} ---"
+            tail -40 "${log_file}"
+        done
+    else
+        _ssh_run "${ip}" \
+            "for f in /tmp/safe_edge_vehicle_nodes/*.log; do [ -f \"\$f\" ] || continue; echo \"--- \$f ---\"; tail -40 \"\$f\"; done" \
+            || true
+    fi
 }
 
 _service_name_for_bin() {
@@ -423,16 +538,17 @@ _run_liveliness_test_case() {
     local ip="$1"
     local name="$2"
     local test_name="$3"
-    local infotainment_log="/tmp/safe_edge_vehicle_nodes/safe_edge_infotainment.log"
+    local infotainment_log
+    infotainment_log="$(_remote_log_path_for_bin "safe_edge_infotainment")"
     local node_log service_name hb_line failed=0
 
     node_log="$(_remote_log_path_for_bin "${name}")"
     echo "[ RUN      ] ${test_name}"
 
     if _remote_pid_is_running "${ip}" "${name}"; then
-        echo "    [qemu] pid exists and process is alive"
+        echo "    [proc] pid exists and process is alive"
     else
-        echo "    [qemu] FAIL pid missing or process not alive"
+        echo "    [proc] FAIL pid missing or process not alive"
         failed=1
     fi
 
@@ -529,53 +645,65 @@ _test_smoke_logs() {
 
 _prepare_local_target_dirs
 
-CONFLICTING_QEMU_TARGETS="$(_find_conflicting_qemu_targets)"
-if [[ -n "${CONFLICTING_QEMU_TARGETS}" ]]; then
-    echo "A QNX VM from another repo target is still running." >&2
-    echo "Stop it first, otherwise SSH may connect to the wrong guest image." >&2
-    echo >&2
-    echo "Conflicts detected:" >&2
-    while IFS=$'\t' read -r pid cwd; do
-        [[ -n "${pid}" ]] || continue
-        echo "  PID ${pid}: ${cwd}" >&2
-    done <<< "${CONFLICTING_QEMU_TARGETS}"
-    exit 1
-fi
+if [[ "${TEST_PLATFORM}" == "qnx" ]]; then
+    CONFLICTING_QEMU_TARGETS="$(_find_conflicting_qemu_targets)"
+    if [[ -n "${CONFLICTING_QEMU_TARGETS}" ]]; then
+        echo "A QNX VM from another repo target is still running." >&2
+        echo "Stop it first, otherwise SSH may connect to the wrong guest image." >&2
+        echo >&2
+        echo "Conflicts detected:" >&2
+        while IFS=$'\t' read -r pid cwd; do
+            [[ -n "${pid}" ]] || continue
+            echo "  PID ${pid}: ${cwd}" >&2
+        done <<< "${CONFLICTING_QEMU_TARGETS}"
+        exit 1
+    fi
 
-cd "${TARGET_DIR}"
+    cd "${TARGET_DIR}"
 
-if [[ "${OPT_STOP}" -eq 1 ]]; then
-    echo "Stopping QNX VM..."
-    mkqnximage --stop 2>/dev/null || true
+    if [[ "${OPT_STOP}" -eq 1 ]]; then
+        echo "Stopping QNX VM..."
+        mkqnximage --stop 2>/dev/null || true
+        kill "$(pgrep -f qemu-system-x86_64)" 2>/dev/null || true
+        echo "VM stopped."
+        exit 0
+    fi
+
     kill "$(pgrep -f qemu-system-x86_64)" 2>/dev/null || true
-    echo "VM stopped."
-    exit 0
-fi
 
-kill "$(pgrep -f qemu-system-x86_64)" 2>/dev/null || true
+    if [[ "${OPT_NO_REBUILD}" -eq 0 ]]; then
+        _validate_vehicle_binaries
+        _refresh_vehicle_ifs_start_snippet
+        _refresh_vehicle_post_start_snippet
+        _refresh_vehicle_system_files_snippet
+        _reset_generated_target_output
+    fi
 
-if [[ "${OPT_NO_REBUILD}" -eq 0 ]]; then
-    _validate_vehicle_binaries
-    _refresh_vehicle_ifs_start_snippet
-    _refresh_vehicle_post_start_snippet
-    _refresh_vehicle_system_files_snippet
-    _reset_generated_target_output
-fi
+    if [[ "${OPT_NO_REBUILD}" -eq 0 ]]; then
+        echo "Building QNX image and starting QEMU..."
+        mkqnximage --noprompt --run=-h --clean >/dev/null 2>&1
+    else
+        echo "Starting QNX QEMU (skipping rebuild)..."
+        mkqnximage --noprompt --run=-h >/dev/null 2>&1
+    fi
 
-if [[ "${OPT_NO_REBUILD}" -eq 0 ]]; then
-    echo "Building QNX image and starting QEMU..."
-    mkqnximage --noprompt --run=-h --clean >/dev/null 2>&1
+    echo "Waiting for VM IP..."
+    VM_IP="$(_get_ip_address)"
+    echo "VM is up: ${VM_IP}"
+    echo "Waiting for SSH..."
+    _wait_for_ssh "${VM_IP}"
+    echo "VM is reachable."
 else
-    echo "Starting QNX QEMU (skipping rebuild)..."
-    mkqnximage --noprompt --run=-h >/dev/null 2>&1
+    if [[ "${OPT_STOP}" -eq 1 ]]; then
+        echo "Stopping local Linux node processes..."
+        _stop_vehicle_nodes ""
+        echo "Processes stopped."
+        exit 0
+    fi
+    _validate_vehicle_binaries
+    VM_IP=""
+    echo "Running native Linux mode. No QNX image will be built."
 fi
-
-echo "Waiting for VM IP..."
-VM_IP="$(_get_ip_address)"
-echo "VM is up: ${VM_IP}"
-echo "Waiting for SSH..."
-_wait_for_ssh "${VM_IP}"
-echo "VM is reachable."
 
 echo "Starting vehicle nodes..."
 _start_vehicle_nodes "${VM_IP}"
@@ -586,7 +714,9 @@ _test_nodes_launch_and_stay_alive "${VM_IP}" || TEST_RC=1
 _test_smoke_logs "${VM_IP}" || TEST_RC=1
 
 _stop_vehicle_nodes "${VM_IP}"
-echo -e "\nStopping QNX VM..."
-mkqnximage --stop 2>/dev/null || true
+if [[ "${TEST_PLATFORM}" == "qnx" ]]; then
+    echo -e "\nStopping QNX VM..."
+    mkqnximage --stop 2>/dev/null || true
+fi
 
 exit "${TEST_RC}"

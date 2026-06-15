@@ -13,6 +13,7 @@ QNX_USER="${USER:-$(id -un)}"
 : "${CMAKE_BUILD_TYPE:=Release}"
 : "${TARGET_DIR:=${WORKSPACE_ROOT}/qnx/targets/qemu-qnx800-${QNX_ARCH}}"
 : "${EDGE_BIN_DIR:=${WORKSPACE_ROOT}/safe_dds/install/edge-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}/bin}"
+: "${EDGE_NATIVE_BIN_DIR:=${WORKSPACE_ROOT}/safe_dds/install/edge-native-${CMAKE_BUILD_TYPE}/bin}"
 
 _SSH_PASS="root"
 _SSH_USER="root"
@@ -23,13 +24,16 @@ exec > >(tee "${LOG_FILE}") 2>&1
 
 OPT_NO_REBUILD=0
 OPT_STOP=0
+OPT_LINUX=0
 
 usage() {
     cat <<EOF
-Usage: bash scripts/launch_tpi_2_2_test.sh [--no-rebuild] [--stop]
+Usage: bash scripts/launch_tpi_2_2_test.sh [--no-rebuild] [--linux|--ubuntu] [--stop]
 
 Options:
   --no-rebuild   Skip image rebuild and reuse existing VM artifacts
+  --linux        Run the native Linux test binaries instead of a QNX VM
+  --ubuntu       Alias for --linux
   --stop         Stop a running VM and exit
 
 Environment variables:
@@ -38,12 +42,14 @@ Environment variables:
   CMAKE_BUILD_TYPE  Release or Debug
   TARGET_DIR        mkqnximage target directory
   EDGE_BIN_DIR      directory containing safe_edge_edge_gateway and test_edge_integration
+  EDGE_NATIVE_BIN_DIR  directory containing native safe_edge_edge_gateway and test_edge_integration
 EOF
 }
 
 for arg in "$@"; do
     case "${arg}" in
         --no-rebuild) OPT_NO_REBUILD=1 ;;
+        --linux|--ubuntu) OPT_LINUX=1 ;;
         --stop) OPT_STOP=1 ;;
         -h|--help)
             usage
@@ -56,6 +62,64 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+if [[ "${OPT_LINUX}" -eq 1 ]]; then
+    EDGE_BIN_DIR="${EDGE_NATIVE_BIN_DIR}"
+fi
+
+_validate_linux_binary() {
+    local bin="$1"
+    local description
+
+    if ! description="$(file "${bin}")"; then
+        echo "Failed to inspect binary: ${bin}" >&2
+        return 1
+    fi
+
+    if ! grep -Fq "GNU/Linux" <<<"${description}"; then
+        echo "Binary does not look like a Linux executable:" >&2
+        echo "  ${description}" >&2
+        echo "Rebuild with: bash scripts/build_native.sh" >&2
+        return 1
+    fi
+}
+
+if [[ "${OPT_LINUX}" -eq 1 ]]; then
+    if [[ "${OPT_STOP}" -eq 1 ]]; then
+        echo "No QNX VM is used in --linux mode. Nothing to stop."
+        exit 0
+    fi
+
+    pkill -f "safe_edge_edge_gateway" 2>/dev/null || true
+
+    for bin in \
+        "${EDGE_BIN_DIR}/safe_edge_edge_gateway" \
+        "${EDGE_BIN_DIR}/test_edge_integration"; do
+        if [[ ! -f "${bin}" ]]; then
+            echo "Binary not found: ${bin}" >&2
+            echo "Build with: bash scripts/build_native.sh" >&2
+            exit 1
+        fi
+        _validate_linux_binary "${bin}"
+    done
+
+    echo ""
+    echo "Running test_edge_integration on Linux..."
+    echo "---------------------------------------------"
+
+    TEST_RC=0
+    SAFE_EDGE_EDGE_BIN="${EDGE_BIN_DIR}/safe_edge_edge_gateway" \
+        "${EDGE_BIN_DIR}/test_edge_integration" || TEST_RC=$?
+
+    echo "---------------------------------------------"
+    if [[ "${TEST_RC}" -eq 0 ]]; then
+        echo "PASSED"
+    else
+        echo "FAILED (exit code ${TEST_RC})"
+        exit "${TEST_RC}"
+    fi
+    exit 0
+fi
 
 if [[ ! -f "${QNX_SDP_ROOT}/qnxsdp-env.sh" ]]; then
     echo "QNX SDK not found at QNX_SDP_ROOT='${QNX_SDP_ROOT}'" >&2

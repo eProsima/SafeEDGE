@@ -4,15 +4,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 OPT_NO_REBUILD=0
+OPT_LINUX=0
 
 usage() {
     cat <<EOF
-Usage: bash scripts/launch_tests.sh [--no-rebuild] [-h|--help]
+Usage: bash scripts/launch_tests.sh [--no-rebuild] [--linux|--ubuntu] [-h|--help]
 
 Runs the Docker integration tests and all available TPI test launchers.
 
 Options:
   --no-rebuild   Forward --no-rebuild to TPI launchers that support it.
+  --linux        Run QNX-oriented TPIs with native Linux binaries instead of QNX images.
+  --ubuntu       Alias for --linux.
   -h, --help     Show this help.
 EOF
 }
@@ -20,6 +23,7 @@ EOF
 for arg in "$@"; do
     case "${arg}" in
         --no-rebuild) OPT_NO_REBUILD=1 ;;
+        --linux|--ubuntu) OPT_LINUX=1 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: ${arg}" >&2; usage >&2; exit 1 ;;
     esac
@@ -43,6 +47,9 @@ run_test() {
 TPI_ARGS=()
 if [[ "${OPT_NO_REBUILD}" -eq 1 ]]; then
     TPI_ARGS+=(--no-rebuild)
+fi
+if [[ "${OPT_LINUX}" -eq 1 ]]; then
+    TPI_ARGS+=(--linux)
 fi
 
 run_test "Fast DDS server" bash "${SCRIPT_DIR}/launch_fast_server.sh" --test
