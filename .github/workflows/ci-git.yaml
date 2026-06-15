@@ -1,0 +1,40 @@
+name: Private CI (Git Permissions)
+
+# Simplified variant:
+#   - no gate job
+#   - trust for workflow_dispatch is delegated to repository permissions
+#   - pull_request is still filtered by author_association
+#   - nightly runs every Saturday at 08:00 UTC
+on:
+  workflow_dispatch:
+      inputs:
+        name:
+          description: "Manual trigger"
+  schedule:
+    - cron: '0 8 * * 6'
+
+permissions:
+  contents: read
+
+jobs:
+  private-build-and-test:
+    name: Private build and test
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'pull_request' &&
+        contains(
+          fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+          github.event.pull_request.author_association
+        )
+      )
+    runs-on: safe_edge_linux
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Hello World
+        run: echo "Hello World"
