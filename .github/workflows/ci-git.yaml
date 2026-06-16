@@ -78,6 +78,13 @@ jobs:
       - name: Test - Fast DDS edge
         run: bash scripts/launch_fast_edge.sh --test
 
+      - name: Clear - Docker Images
+        run: |
+          docker stop safe_edge_server:fast || true
+          docker stop safe_edge_edge:fast || true
+          docker rmi -f safe-edge-server:fast || true
+          docker rmi -f safe-edge-edge:fast || true
+
       - name: Test - TPI 2.1
         run: bash scripts/launch_tpi_2_1_test.sh --linux --no-rebuild
 

@@ -96,7 +96,8 @@ public:
     void TearDown() override
     {
         std::cout << "[env] Stopping safe_edge_edge_gateway...\n";
-        std::system("pkill -f safe_edge_edge_gateway 2>/dev/null || true");
+        const int res = std::system("pkill -f safe_edge_edge_gateway 2>/dev/null || true");
+        (void) res;
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 };
