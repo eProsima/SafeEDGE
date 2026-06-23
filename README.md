@@ -49,53 +49,74 @@ Use `scripts/` for operational entry points, `qnx/` for QNX/hypervisor layout,
 |---|---|---|
 | `server` | Docker container `safe-edge-server` | `safe_edge_server` |
 | `edge` | Docker container `safe-edge-edge` | `safe_edge_edge_gateway` |
-| `safety` | QNX guest VM | `safe_edge_vehicle_mock`, `safe_edge_safety_io_adapters`, `safe_edge_policy_engine` |
-| `non-safety` | QNX guest VM | `safe_edge_cloud_gateway`, `safe_edge_ota_service`, `safe_edge_infotainment` |
+| `safety` | QNX guest VM or native Linux processes | `safe_edge_vehicle_mock`, `safe_edge_safety_io_adapters`, `safe_edge_policy_engine` |
+| `non-safety` | QNX guest VM or native Linux processes | `safe_edge_cloud_gateway`, `safe_edge_ota_service`, `safe_edge_infotainment` |
+
+### Execution modes used in this repository
+
+The repository currently supports two practical execution modes for the
+integrated launchers:
+
+- `qnx`
+  Docker `server` and `edge` run on the Linux host. Safety and non-safety
+  binaries run inside a QNX VM and are controlled through SSH.
+- `--linux`
+  Docker `server` and `edge` still run on the Linux host. Safety and
+  non-safety binaries run as native Linux host processes.
+
+Some launchers and `qnx/` assets refer to a hypervisor or split-guest layout.
 
 ### High-level topology
 
 ```text
-Host Linux (virbr0, typically 192.168.122.1)
-├── Docker container: safe-edge-server   DDS port 8020
-├── Docker container: safe-edge-edge     DDS port 8030
-└── QNX Hypervisor host
-    ├── safety guest      192.168.10.2
-    │   ├── safety_io_adapters   8001
-    │   ├── policy_engine        8002
-    │   └── vehicle_mock         8003
-    └── non-safety guest  192.168.20.2
-        ├── cloud_gateway        8011
-        ├── ota_service          8012
-        └── infotainment         8013
+Linux host
+├── Docker container: safe-edge-server   DDS participant port 8020
+├── Docker container: safe-edge-edge     DDS participant port 8030
+└── Vehicle-side binaries
+    ├── qnx mode:
+    │   ├── safety guest      participant ports 8001, 8002, 8003
+    │   └── non-safety guest  participant ports 8011, 8012, 8013
+    └── --linux mode:
+        ├── safety processes on host      participant ports 8001, 8002, 8003
+        └── non-safety processes on host  participant ports 8011, 8012, 8013
 ```
 
-The QNX hypervisor host routes between:
-
-- `192.168.10.0/24` safety guest subnet
-- `192.168.20.0/24` non-safety guest subnet
-- host Linux bridge subnet, typically `192.168.122.0/24`
+In `qnx` mode, the guest-side IPs and the Linux bridge IP come from the active
+QNX target and launcher path. In `--linux` mode, the launchers resolve a host
+IP dynamically and use explicit DDS peers on that host network stack.
 
 ### Interfaces and endpoints
 
 - Docker services run with `--network host`
 - `server` participates on the host network stack at DDS participant port `8020`
 - `edge` participates on the host network stack at DDS participant port `8030`
-- safety guest IP: `192.168.10.2`
-- non-safety guest IP: `192.168.20.2`
-- SSH access to both guests is part of the normal operational flow
+- in `qnx` mode, SSH access to the guest VM is part of the normal operational flow
+- in `--linux` mode, safety and non-safety binaries are started directly as host
+  processes by the test launchers
 
 ### Current discovery configuration
 
-The current launcher-driven DDS discovery topology is:
+The launchers configure DDS discovery explicitly through environment variables
+such as:
+
+- `SAFE_EDGE_OWN_IP`
+- `SAFE_EDGE_SAFETY_IP`
+- `SAFE_EDGE_NON_SAFETY_IP`
+- `SAFE_EDGE_HOST_IP`
+- `SAFE_EDGE_CROSS_DOMAIN_IP`
+- `SAFE_EDGE_INITIAL_PEERS`
+
+The resulting peer layout follows this pattern:
 
 | Group | Current initial peers |
 |---|---|
-| `server` | `non-safety:8011`, `host:8030` |
-| `edge` | `safety:8001`, `safety:8002`, `non-safety:8011`, `host:8020` |
-| `safety` | `safety:8001,8002`, `non-safety:8011`, `host:8020,8030` |
-| `non-safety` | `non-safety:8011,8012`, `safety:8001,8002`, `host:8020,8030` |
+| `server` | non-safety `8011`, edge `8030` |
+| `edge` | safety `8001`, safety `8002`, non-safety `8011`, server `8020` |
+| `safety` | safety `8001,8002`, non-safety `8011`, server `8020`, edge `8030` |
+| `non-safety` | safety `8001,8002`, non-safety `8011`, server `8020`, edge `8030` |
 
-This is the current discovery setup, not a protocol-level guarantee.
+Exact IP values depend on the launcher mode and target environment. The port
+roles above are the stable part.
 
 ## 4. Prerequisites
 
@@ -163,18 +184,20 @@ bash scripts/check_setup.sh
 
 ### Runtime topology variables
 
-The integrated stack currently relies mainly on:
+The integrated stack relies mainly on:
 
 ```bash
-# Host-side announced IP, usually detected from virbr0
-SAFE_EDGE_OWN_IP=192.168.122.1
+# Announced IP for the current process/container
+SAFE_EDGE_OWN_IP=<resolved_at_runtime>
 
-# Fixed guest IPs in the current split hypervisor topology
-SAFE_EDGE_SAFETY_IP=192.168.10.2
-SAFE_EDGE_NON_SAFETY_IP=192.168.20.2
+# Peer IPs used by integrated launchers
+SAFE_EDGE_SAFETY_IP=<safety-side IP>
+SAFE_EDGE_NON_SAFETY_IP=<non-safety-side IP>
+SAFE_EDGE_HOST_IP=<host-side IP>
+SAFE_EDGE_CROSS_DOMAIN_IP=<peer-domain IP>
 
 # Explicit DDS discovery peers
-SAFE_EDGE_INITIAL_PEERS=192.168.10.2:8001,192.168.20.2:8011,192.168.122.1:8020
+SAFE_EDGE_INITIAL_PEERS=<ip:port,...>
 ```
 
 Depending on binary family and launcher path, backward-compatible fallback
@@ -258,6 +281,9 @@ bash scripts/<script_name>.sh [options]
 | Launch split QNX hypervisor stack | `scripts/launch_hypervisor_split.sh` | Safety guest + non-safety guest |
 | Stop split QNX hypervisor stack | `scripts/launch_hypervisor_split.sh --stop` | Stops hypervisor/QNX split flow |
 | Launch single-guest QNX baseline | `scripts/launch_hypervisor_nodes.sh` | Alternative/baseline launcher |
+| Run Stage 3 outage test | `scripts/launch_tpi_3_1_test.sh` | Integrated stack, supports `qnx` and `--linux` |
+| Run Stage 3 low-SoC test | `scripts/launch_tpi_3_2_test.sh` | Integrated stack, supports `qnx` and `--linux` |
+| Run Stage 3 mixed-traffic benchmark | `scripts/launch_tpi_3_3_test.sh` | Integrated stack, supports `qnx` and `--linux` |
 | Run all wired tests | `scripts/launch_tests.sh` | Aggregates Docker tests and TPI launchers |
 
 ### Full stack launcher
@@ -290,6 +316,18 @@ Single-guest baseline:
 bash scripts/launch_hypervisor_nodes.sh
 ```
 
+### Stage 3 integrated launchers
+
+```bash
+bash scripts/launch_tpi_3_1_test.sh [--linux|--ubuntu] [--no-rebuild]
+bash scripts/launch_tpi_3_2_test.sh [--linux|--ubuntu] [--no-rebuild]
+bash scripts/launch_tpi_3_3_test.sh [--linux|--ubuntu] [--no-rebuild]
+```
+
+These launchers are repository-scoped validation entry points. They orchestrate
+the stack that exists in this repository; they are not a replacement for the
+formal project documentation.
+
 ## 8. Tests
 
 ### Run all tests
@@ -319,6 +357,9 @@ bash scripts/launch_tpi_2_2_test.sh
 bash scripts/launch_tpi_2_3_test.sh
 bash scripts/launch_tpi_2_5_test.sh
 bash scripts/launch_tpi_2_6_test.sh
+bash scripts/launch_tpi_3_1_test.sh
+bash scripts/launch_tpi_3_2_test.sh
+bash scripts/launch_tpi_3_3_test.sh
 ```
 
 ### Test intent
@@ -326,6 +367,8 @@ bash scripts/launch_tpi_2_6_test.sh
 - Fast DDS launchers with `--test` run Docker integration tests
 - `launch_tpi_2_3_test.sh` exercises the Linux/common server path
 - the QNX TPI launchers exercise QNX VM and SafeDDS flows
+- the Stage 3 launchers exercise the integrated stack from this repository in
+  either `qnx` or `--linux` mode
 
 ## 9. Logs and Observability
 
@@ -346,26 +389,23 @@ tail -f /tmp/safe-edge-server.log
 
 ### QNX guest access
 
-After `launch_all.sh` or `launch_hypervisor_split.sh` succeeds:
-
-```bash
-ssh -o ControlPath=/tmp/ssh-guest-safety-ctl root@192.168.10.2
-ssh -o ControlPath=/tmp/ssh-guest-non-safety-ctl root@192.168.20.2
-```
+After `launch_all.sh` or `launch_hypervisor_split.sh` succeeds, the active guest
+IPs come from the chosen QNX target. The exact addresses are launcher-defined
+and should be read from runtime output rather than assumed from this document.
 
 ### QNX guest logs
 
 Safety:
 
 ```bash
-ssh -o ControlPath=/tmp/ssh-guest-safety-ctl root@192.168.10.2 \
+ssh root@<safety-guest-ip> \
   'tail -f /data/safe-edge-safety/logs/*.log | grep -v "^==> .* <==$"'
 ```
 
 Non-safety:
 
 ```bash
-ssh -o ControlPath=/tmp/ssh-guest-non-safety-ctl root@192.168.20.2 \
+ssh root@<non-safety-guest-ip> \
   'tail -f /data/safe-edge-non-safety/logs/*.log | grep -v "^==> .* <==$"'
 ```
 

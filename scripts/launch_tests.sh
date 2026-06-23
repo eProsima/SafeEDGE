@@ -59,6 +59,9 @@ run_test "TPI 2.1" bash "${SCRIPT_DIR}/launch_tpi_2_1_test.sh" "${TPI_ARGS[@]}"
 run_test "TPI 2.2" bash "${SCRIPT_DIR}/launch_tpi_2_2_test.sh" "${TPI_ARGS[@]}"
 run_test "TPI 2.5" bash "${SCRIPT_DIR}/launch_tpi_2_5_test.sh" "${TPI_ARGS[@]}"
 run_test "TPI 2.6" bash "${SCRIPT_DIR}/launch_tpi_2_6_test.sh" "${TPI_ARGS[@]}"
+run_test "TPI 3.1" bash "${SCRIPT_DIR}/launch_tpi_3_1_test.sh" "${TPI_ARGS[@]}"
+run_test "TPI 3.2" bash "${SCRIPT_DIR}/launch_tpi_3_2_test.sh" "${TPI_ARGS[@]}"
+run_test "TPI 3.3" bash "${SCRIPT_DIR}/launch_tpi_3_3_test.sh" "${TPI_ARGS[@]}"
 
 echo ""
 if [[ "${FAILURES}" -eq 0 ]]; then

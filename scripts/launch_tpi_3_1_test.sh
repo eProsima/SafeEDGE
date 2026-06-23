@@ -16,11 +16,6 @@ QNX_USER="${USER:-$(id -un)}"
 : "${NON_SAFETY_BIN_DIR:=${WORKSPACE_ROOT}/safe_dds/install/non-safety-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}/bin}"
 : "${SAFETY_NATIVE_BIN_DIR:=${WORKSPACE_ROOT}/safe_dds/install/safety-native-${CMAKE_BUILD_TYPE}/bin}"
 : "${NON_SAFETY_NATIVE_BIN_DIR:=${WORKSPACE_ROOT}/safe_dds/install/non-safety-native-${CMAKE_BUILD_TYPE}/bin}"
-: "${CI_DOCKER_NETWORK:=safeedge-tpi31-ci}"
-: "${CI_DOCKER_SUBNET:=172.29.0.0/24}"
-: "${CI_SERVER_IP:=172.29.0.10}"
-: "${CI_VEHICLE_IP:=172.29.0.20}"
-
 : "${DISCOVERY_WAIT_SECS:=15}"
 : "${OUTAGE_HOLD_SECS:=30}"
 STABILITY_WINDOW_SECS=30
@@ -35,22 +30,19 @@ _SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o Connec
 TEST_PLATFORM="qnx"
 OPT_NO_REBUILD=0
 OPT_STOP=0
-OPT_CI=0
 
 SAFETY_BINS=(safe_edge_safety_io_adapters safe_edge_policy_engine safe_edge_vehicle_mock)
 NON_SAFETY_BINS=(safe_edge_infotainment safe_edge_cloud_gateway)
 VEHICLE_BINS=("${NON_SAFETY_BINS[@]}" "${SAFETY_BINS[@]}")
-CI_VEHICLE_BINS=(safe_edge_infotainment safe_edge_cloud_gateway safe_edge_ota_service safe_edge_safety_io_adapters safe_edge_policy_engine safe_edge_vehicle_mock)
 
 VM_IP=""
 CHILD_PIDS=()
 
 usage() {
     cat <<EOF
-Usage: bash scripts/launch_tpi_3_1_test.sh [--linux] [--ci] [--no-rebuild] [--stop] [-h]
+Usage: bash scripts/launch_tpi_3_1_test.sh [--linux] [--no-rebuild] [--stop] [-h]
 
   --linux        Run native Linux binaries (no QNX VM); CI-friendly
-  --ci           Run the full TPI 3.1 stack in Docker (server + edge + vehicle)
   --no-rebuild   Skip QNX image rebuild
   --stop         Stop running VM/processes and exit
 
@@ -64,7 +56,6 @@ EOF
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --linux|--ubuntu) TEST_PLATFORM="linux"; shift ;;
-        --ci)             TEST_PLATFORM="ci"; OPT_CI=1; shift ;;
         --no-rebuild)     OPT_NO_REBUILD=1; shift ;;
         --stop)           OPT_STOP=1; shift ;;
         -h|--help)        usage; exit 0 ;;
@@ -166,11 +157,6 @@ _capture_container_network_diag() {
     } > "${out_file}" 2>&1
 }
 
-_ensure_ci_network() {
-    docker network inspect "${CI_DOCKER_NETWORK}" >/dev/null 2>&1 || \
-        docker network create --driver bridge --subnet "${CI_DOCKER_SUBNET}" "${CI_DOCKER_NETWORK}" >/dev/null
-}
-
 _wait_for_container_running() {
     local name="$1" timeout="$2"
     local deadline=$(( $(date +%s) + timeout ))
@@ -181,51 +167,6 @@ _wait_for_container_running() {
         fi
         sleep 2
     done
-}
-
-_start_ci_stack() {
-    local vehicle_peers="${CI_VEHICLE_IP}:8001,${CI_VEHICLE_IP}:8002,${CI_VEHICLE_IP}:8011,${CI_SERVER_IP}:8020,${CI_SERVER_IP}:8030"
-
-    docker rm -f safe-edge-edge safe-edge-server safe-edge-vehicle >/dev/null 2>&1 || true
-    _ensure_ci_network
-
-    echo "Starting safe-edge-server..."
-    docker run -d \
-        --name safe-edge-server \
-        --network "${CI_DOCKER_NETWORK}" \
-        --ip "${CI_SERVER_IP}" \
-        -e "SAFE_EDGE_OWN_IP=${CI_SERVER_IP}" \
-        -e "SAFE_EDGE_NON_SAFETY_IP=${CI_VEHICLE_IP}" \
-        -e "SAFE_EDGE_INITIAL_PEERS=${CI_VEHICLE_IP}:8011,${CI_SERVER_IP}:8030" \
-        safe-edge-server:fast >/dev/null
-    _wait_for_container_running "safe-edge-server" 30
-    echo "safe-edge-server running"
-
-    echo "Starting safe-edge-edge (5s delay)..."
-    sleep 5
-    docker run -d \
-        --name safe-edge-edge \
-        --network "container:safe-edge-server" \
-        -e "SAFE_EDGE_OWN_IP=${CI_SERVER_IP}" \
-        -e "SAFE_EDGE_SAFETY_IP=${CI_VEHICLE_IP}" \
-        -e "SAFE_EDGE_NON_SAFETY_IP=${CI_VEHICLE_IP}" \
-        -e "SAFE_EDGE_INITIAL_PEERS=${CI_VEHICLE_IP}:8001,${CI_VEHICLE_IP}:8002,${CI_VEHICLE_IP}:8011,${CI_SERVER_IP}:8020" \
-        safe-edge-edge:fast >/dev/null
-    _wait_for_container_running "safe-edge-edge" 30
-    echo "safe-edge-edge running"
-
-    echo "Starting safe-edge-vehicle..."
-    docker run -d \
-        --name safe-edge-vehicle \
-        --network "${CI_DOCKER_NETWORK}" \
-        --ip "${CI_VEHICLE_IP}" \
-        -e "SAFE_EDGE_OWN_IP=${CI_VEHICLE_IP}" \
-        -e "SAFE_EDGE_CROSS_DOMAIN_IP=${CI_VEHICLE_IP}" \
-        -e "SAFE_EDGE_HOST_IP=${CI_SERVER_IP}" \
-        -e "SAFE_EDGE_INITIAL_PEERS=${vehicle_peers}" \
-        safe-edge-vehicle:fast >/dev/null
-    _wait_for_container_running "safe-edge-vehicle" 30
-    echo "safe-edge-vehicle running"
 }
 
 _host_bin_path() {
@@ -299,10 +240,6 @@ _start_vehicle_nodes() {
     local safety_env
     local non_safety_env
 
-    if [[ "${TEST_PLATFORM}" == "ci" ]]; then
-        return 0
-    fi
-
     if [[ "${TEST_PLATFORM}" == "linux" ]]; then
         safety_env=(
             "SAFE_EDGE_OWN_IP=${PEER_SAFETY_IP}"
@@ -342,11 +279,6 @@ _start_vehicle_nodes() {
 }
 
 _stop_vehicle_nodes() {
-    if [[ "${TEST_PLATFORM}" == "ci" ]]; then
-        echo "Stopping safe-edge-vehicle..."
-        docker stop safe-edge-vehicle 2>/dev/null || true
-        return 0
-    fi
     if [[ "${TEST_PLATFORM}" == "linux" ]]; then
         local f
         for f in "${RUNTIME_DIR}"/*.pid; do
@@ -364,17 +296,6 @@ _stop_vehicle_nodes() {
 _collect_vehicle_logs() {
     local name tmp
     if [[ "${TEST_PLATFORM}" == "linux" ]]; then
-        return 0
-    fi
-    if [[ "${TEST_PLATFORM}" == "ci" ]]; then
-        echo "Collecting vehicle node logs from container..."
-        for name in "${CI_VEHICLE_BINS[@]}"; do
-            if docker exec safe-edge-vehicle sh -lc "cat /var/log/safe-edge/${name}.log 2>/dev/null" > "${RUNTIME_DIR}/${name}.log" 2>/dev/null; then
-                :
-            else
-                : > "${RUNTIME_DIR}/${name}.log"
-            fi
-        done
         return 0
     fi
     echo "Collecting vehicle node logs from VM..."
@@ -399,11 +320,6 @@ _stop_all() {
     docker stop safe-edge-edge   2>/dev/null || true
     echo "Stopping safe-edge-server..."
     docker stop safe-edge-server 2>/dev/null || true
-    if [[ "${TEST_PLATFORM}" == "ci" ]]; then
-        echo "Stopping safe-edge-vehicle..."
-        docker rm -f safe-edge-edge safe-edge-server safe-edge-vehicle >/dev/null 2>&1 || true
-        docker network rm "${CI_DOCKER_NETWORK}" >/dev/null 2>&1 || true
-    fi
     if [[ "${TEST_PLATFORM}" == "qnx" && -n "${VM_IP}" ]]; then
         echo "Stopping QNX VM..."
         (cd "${TARGET_DIR}" && mkqnximage --stop 2>/dev/null || true)
@@ -417,11 +333,6 @@ if [[ "${OPT_STOP}" -eq 1 ]]; then
     _stop_vehicle_nodes 2>/dev/null || true
     docker stop safe-edge-edge   2>/dev/null || true
     docker stop safe-edge-server 2>/dev/null || true
-    if [[ "${TEST_PLATFORM}" == "ci" ]]; then
-        echo "Stopping safe-edge-vehicle..."
-        docker rm -f safe-edge-edge safe-edge-server safe-edge-vehicle >/dev/null 2>&1 || true
-        docker network rm "${CI_DOCKER_NETWORK}" >/dev/null 2>&1 || true
-    fi
     if [[ "${TEST_PLATFORM}" == "qnx" ]]; then
         (cd "${TARGET_DIR}" && mkqnximage --stop 2>/dev/null || true)
         kill "$(pgrep -f qemu-system-x86_64)" 2>/dev/null || true
@@ -433,20 +344,14 @@ fi
 # ── Preflight ─────────────────────────────────────────────────────────────────
 
 echo "Building Docker images for TPI 3.1..."
-BUILD_UBUNTU_ARGS=()
-if [[ "${TEST_PLATFORM}" == "ci" ]]; then
-    BUILD_UBUNTU_ARGS+=(--vehicle)
-fi
-if ! bash "${SCRIPT_DIR}/build_ubuntu.sh" "${BUILD_UBUNTU_ARGS[@]}" > "${RUNTIME_DIR}/build_ubuntu.log" 2>&1; then
+if ! bash "${SCRIPT_DIR}/build_ubuntu.sh" > "${RUNTIME_DIR}/build_ubuntu.log" 2>&1; then
     echo "Docker image build failed. See ${RUNTIME_DIR}/build_ubuntu.log" >&2
     tail -50 "${RUNTIME_DIR}/build_ubuntu.log" >&2 || true
     exit 1
 fi
 echo "Docker images ready"
 
-if [[ "${TEST_PLATFORM}" != "ci" ]]; then
-    _validate_binaries
-fi
+_validate_binaries
 
 if [[ "${TEST_PLATFORM}" == "qnx" ]]; then
     [[ -f "${QNX_SDP_ROOT}/qnxsdp-env.sh" ]] || { echo "QNX SDK not found: ${QNX_SDP_ROOT}" >&2; exit 1; }
@@ -511,10 +416,6 @@ if [[ "${TEST_PLATFORM}" == "linux" ]]; then
     PEER_SAFETY_IP="${LINUX_HOST_IP}"
     PEER_NON_SAFETY_IP="${LINUX_HOST_IP}"
     DOCKER_OWN_IP="${LINUX_HOST_IP}"
-elif [[ "${TEST_PLATFORM}" == "ci" ]]; then
-    PEER_SAFETY_IP="${CI_VEHICLE_IP}"
-    PEER_NON_SAFETY_IP="${CI_VEHICLE_IP}"
-    DOCKER_OWN_IP="${CI_SERVER_IP}"
 else
     PEER_SAFETY_IP="${VM_IP}"
     PEER_NON_SAFETY_IP="${VM_IP}"
@@ -526,50 +427,44 @@ echo "Topology: safety=${PEER_SAFETY_IP} non_safety=${PEER_NON_SAFETY_IP} docker
 
 _detect_docker_network_mode
 
-if [[ "${TEST_PLATFORM}" == "ci" ]]; then
-    _start_ci_stack
-else
-    echo "Starting safe-edge-server..."
-    SAFE_EDGE_OWN_IP="${DOCKER_OWN_IP}" \
-    SAFE_EDGE_NON_SAFETY_IP="${PEER_NON_SAFETY_IP}" \
-    SAFE_EDGE_INITIAL_PEERS="${PEER_NON_SAFETY_IP}:8011,${DOCKER_OWN_IP}:8030" \
-        bash "${SCRIPT_DIR}/launch_fast_server.sh" > "${RUNTIME_DIR}/safe_edge_server_launcher.log" 2>&1 &
-    CHILD_PIDS+=($!)
+echo "Starting safe-edge-server..."
+SAFE_EDGE_OWN_IP="${DOCKER_OWN_IP}" \
+SAFE_EDGE_NON_SAFETY_IP="${PEER_NON_SAFETY_IP}" \
+SAFE_EDGE_INITIAL_PEERS="${PEER_NON_SAFETY_IP}:8011,${DOCKER_OWN_IP}:8030" \
+    bash "${SCRIPT_DIR}/launch_fast_server.sh" > "${RUNTIME_DIR}/safe_edge_server_launcher.log" 2>&1 &
+CHILD_PIDS+=($!)
 
-    deadline=$(( $(date +%s) + 30 ))
-    until docker ps -q --filter "name=^safe-edge-server$" | grep -q .; do
-        if [[ $(date +%s) -gt ${deadline} ]]; then
-            echo "ERROR: safe-edge-server did not start within 30s" >&2; exit 1
-        fi
-        sleep 2
-    done
-    echo "safe-edge-server running"
+deadline=$(( $(date +%s) + 30 ))
+until docker ps -q --filter "name=^safe-edge-server$" | grep -q .; do
+    if [[ $(date +%s) -gt ${deadline} ]]; then
+        echo "ERROR: safe-edge-server did not start within 30s" >&2; exit 1
+    fi
+    sleep 2
+done
+echo "safe-edge-server running"
 
-    echo "Starting safe-edge-edge (5s delay)..."
-    sleep 5
-    SAFE_EDGE_OWN_IP="${DOCKER_OWN_IP}" \
-    SAFE_EDGE_SAFETY_IP="${PEER_SAFETY_IP}" \
-    SAFE_EDGE_NON_SAFETY_IP="${PEER_NON_SAFETY_IP}" \
-    SAFE_EDGE_INITIAL_PEERS="${PEER_SAFETY_IP}:8001,${PEER_SAFETY_IP}:8002,${PEER_NON_SAFETY_IP}:8011,${DOCKER_OWN_IP}:8020" \
-        bash "${SCRIPT_DIR}/launch_fast_edge.sh" > "${RUNTIME_DIR}/safe_edge_edge_launcher.log" 2>&1 &
-    CHILD_PIDS+=($!)
+echo "Starting safe-edge-edge (5s delay)..."
+sleep 5
+SAFE_EDGE_OWN_IP="${DOCKER_OWN_IP}" \
+SAFE_EDGE_SAFETY_IP="${PEER_SAFETY_IP}" \
+SAFE_EDGE_NON_SAFETY_IP="${PEER_NON_SAFETY_IP}" \
+SAFE_EDGE_INITIAL_PEERS="${PEER_SAFETY_IP}:8001,${PEER_SAFETY_IP}:8002,${PEER_NON_SAFETY_IP}:8011,${DOCKER_OWN_IP}:8020" \
+    bash "${SCRIPT_DIR}/launch_fast_edge.sh" > "${RUNTIME_DIR}/safe_edge_edge_launcher.log" 2>&1 &
+CHILD_PIDS+=($!)
 
-    deadline=$(( $(date +%s) + 30 ))
-    until docker ps -q --filter "name=^safe-edge-edge$" | grep -q .; do
-        if [[ $(date +%s) -gt ${deadline} ]]; then
-            echo "ERROR: safe-edge-edge did not start within 30s" >&2; exit 1
-        fi
-        sleep 2
-    done
-    echo "safe-edge-edge running"
-fi
+deadline=$(( $(date +%s) + 30 ))
+until docker ps -q --filter "name=^safe-edge-edge$" | grep -q .; do
+    if [[ $(date +%s) -gt ${deadline} ]]; then
+        echo "ERROR: safe-edge-edge did not start within 30s" >&2; exit 1
+    fi
+    sleep 2
+done
+echo "safe-edge-edge running"
 
 # ── Start vehicle nodes ───────────────────────────────────────────────────────
 
 echo "Starting vehicle nodes..."
-if [[ "${TEST_PLATFORM}" != "ci" ]]; then
-    _start_vehicle_nodes
-fi
+_start_vehicle_nodes
 echo "Vehicle nodes launched"
 
 # ── DDS convergence wait ──────────────────────────────────────────────────────
@@ -603,21 +498,11 @@ _snapshot_container_runtime() {
 
 docker logs safe-edge-server > "${RUNTIME_DIR}/docker_safe_edge_server_preflight.log" 2>&1 || true
 docker logs safe-edge-edge > "${RUNTIME_DIR}/docker_safe_edge_edge_preflight.log" 2>&1 || true
-if [[ "${TEST_PLATFORM}" == "ci" ]]; then
-    docker logs safe-edge-vehicle > "${RUNTIME_DIR}/docker_safe_edge_vehicle_preflight.log" 2>&1 || true
-    _collect_vehicle_logs
-fi
 _snapshot_container_runtime "safe-edge-server" "${RUNTIME_DIR}/docker_safe_edge_server_snapshot.log"
 _snapshot_container_runtime "safe-edge-edge" "${RUNTIME_DIR}/docker_safe_edge_edge_snapshot.log"
-if [[ "${TEST_PLATFORM}" == "ci" ]]; then
-    _snapshot_container_runtime "safe-edge-vehicle" "${RUNTIME_DIR}/docker_safe_edge_vehicle_snapshot.log"
-fi
 _capture_host_network_diag "${RUNTIME_DIR}/host_network_snapshot.log"
 _capture_container_network_diag "safe-edge-server" "${RUNTIME_DIR}/docker_safe_edge_server_network.log"
 _capture_container_network_diag "safe-edge-edge" "${RUNTIME_DIR}/docker_safe_edge_edge_network.log"
-if [[ "${TEST_PLATFORM}" == "ci" ]]; then
-    _capture_container_network_diag "safe-edge-vehicle" "${RUNTIME_DIR}/docker_safe_edge_vehicle_network.log"
-fi
 
 # ── Edge baseline (setup precondition) ───────────────────────────────────────
 
@@ -657,9 +542,7 @@ _check_alive() {
     TOTAL_COUNT=$(( TOTAL_COUNT + 1 ))
     echo "[ RUN      ] ${label}"
     local alive=0
-    if [[ "${TEST_PLATFORM}" == "ci" ]]; then
-        docker exec safe-edge-vehicle sh -lc "pgrep -f '${name}' >/dev/null 2>&1" >/dev/null 2>&1 && alive=1
-    elif [[ "${TEST_PLATFORM}" == "linux" ]]; then
+    if [[ "${TEST_PLATFORM}" == "linux" ]]; then
         local pid_file="${RUNTIME_DIR}/${name}.pid"
         [[ -f "${pid_file}" ]] && kill -0 "$(cat "${pid_file}")" 2>/dev/null && alive=1
     else
@@ -712,20 +595,11 @@ _print_failure_diagnostics() {
     _print_diag_section "edge runtime snapshot" \
         "${RUNTIME_DIR}/docker_safe_edge_edge_snapshot.log" \
         ".*" 20
-    _print_diag_section "vehicle runtime snapshot" \
-        "${RUNTIME_DIR}/docker_safe_edge_vehicle_snapshot.log" \
-        ".*" 20
     _print_diag_section "server network snapshot" \
         "${RUNTIME_DIR}/docker_safe_edge_server_network.log" \
         ".*" 40
     _print_diag_section "edge network snapshot" \
         "${RUNTIME_DIR}/docker_safe_edge_edge_network.log" \
-        ".*" 40
-    _print_diag_section "vehicle network snapshot" \
-        "${RUNTIME_DIR}/docker_safe_edge_vehicle_network.log" \
-        ".*" 40
-    _print_diag_section "vehicle aggregated container log" \
-        "${RUNTIME_DIR}/docker_safe_edge_vehicle.log" \
         ".*" 40
     _print_diag_section "policy_engine PolicyDecision" \
         "${pe_diag_log}" \
@@ -818,10 +692,6 @@ echo "[ STEP     ] Waiting for propagation (${OUTAGE_HOLD_SECS}s)"
 sleep "${OUTAGE_HOLD_SECS}"
 docker logs --since "${OUTAGE_TS}" safe-edge-edge > "${RUNTIME_DIR}/docker_safe_edge_edge.log" 2>&1 || true
 docker logs --since "${OUTAGE_TS}" safe-edge-server > "${RUNTIME_DIR}/docker_safe_edge_server_post_stop.log" 2>&1 || true
-if [[ "${TEST_PLATFORM}" == "ci" ]]; then
-    docker logs safe-edge-vehicle > "${RUNTIME_DIR}/docker_safe_edge_vehicle.log" 2>&1 || true
-    _collect_vehicle_logs
-fi
 _extract_since_line "${RUNTIME_DIR}/safe_edge_policy_engine.log" "${POLICY_LINES_BEFORE_STOP}" \
     "${RUNTIME_DIR}/safe_edge_policy_engine_post_stop.log"
 _extract_since_line "${RUNTIME_DIR}/safe_edge_cloud_gateway.log" "${CLOUD_LINES_BEFORE_STOP}" \
