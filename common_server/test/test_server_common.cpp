@@ -245,10 +245,10 @@ TEST(RealPilotServerTest, ChargerLocationsReturnsParsedData)
                      << " returned JSON but no parseable charger locations";
     }
 
-    std::cout << "  [real] Received " << locations.size() << " charger location(s)\n";
+    std::cout << "[real] Received " << locations.size() << " charger location(s)\n";
     for (const auto& loc : locations)
     {
-        std::cout << "  [real]   id=" << loc.id
+        std::cout << "[real]   id=" << loc.id
                   << " name=" << loc.name
                   << " lat=" << loc.latitude
                   << " lng=" << loc.longitude << "\n";
@@ -267,7 +267,7 @@ TEST(RealPilotServerTest, ChargerTypesReturnsData)
 
     skip_if_degraded_real_response(body, CHARGER_TYPES_EP, "charger_type");
 
-    std::cout << "  [real] charger_types response bytes=" << body.size() << "\n";
+    std::cout << "[real] charger_types response bytes=" << body.size() << "\n";
 }
 
 TEST(RealPilotServerTest, ChargingSessionsReturnsData)
@@ -282,7 +282,7 @@ TEST(RealPilotServerTest, ChargingSessionsReturnsData)
 
     skip_if_degraded_real_response(body, CHARGING_SESSIONS_EP, "station_id");
 
-    std::cout << "  [real] charging_sessions response bytes=" << body.size() << "\n";
+    std::cout << "[real] charging_sessions response bytes=" << body.size() << "\n";
 }
 
 TEST(RealPilotServerTest, TransitHealthReturnsStatus)
@@ -297,7 +297,7 @@ TEST(RealPilotServerTest, TransitHealthReturnsStatus)
 
     skip_if_degraded_real_response(body, TRANSIT_HEALTH_EP, "status");
 
-    std::cout << "  [real] transit_health response: " << body << "\n";
+    std::cout << "[real] transit_health response: " << body << "\n";
 }
 
 TEST(RealPilotServerTest, TransitMetricsReturnsByRoute)
@@ -312,5 +312,5 @@ TEST(RealPilotServerTest, TransitMetricsReturnsByRoute)
 
     skip_if_degraded_real_response(body, TRANSIT_METRICS_EP, "by_route");
 
-    std::cout << "  [real] transit_metrics response bytes=" << body.size() << "\n";
+    std::cout << "[real] transit_metrics response bytes=" << body.size() << "\n";
 }

@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/test_output_common.sh"
 LOG_DIR="${SCRIPT_DIR}/logs"
 RAW_LOG="${LOG_DIR}/tpi_2_6_raw.log"
 REPORT="${LOG_DIR}/tpi_2_6_report.txt"
@@ -137,6 +138,9 @@ fi
 
 mkdir -p "${LOG_DIR}"
 
+test_banner_open "TPI 2.6 - Safety Path Latency"
+test_banner_context "${TEST_PLATFORM}" "${REPORT}"
+
 _validate_linux_binary() {
     local bin="$1"
     local description
@@ -173,7 +177,7 @@ _wait_for_ssh() {
     local i
     for ((i = 1; i <= max_tries; i++)); do
         if _ssh_run "${ip}" "true" >/dev/null 2>&1; then return 0; fi
-        if (( i == 1 || i % 5 == 0 )); then echo "  waiting for SSH (${i}/${max_tries})..."; fi
+        if (( i == 1 || i % 5 == 0 )); then test_info "waiting for SSH (${i}/${max_tries})..."; fi
         sleep 2
     done
     echo "Timed out waiting for SSH on ${ip}." >&2; return 1
@@ -457,26 +461,25 @@ _run_measurement_loop() {
     fi
     local i
 
-    echo "Waiting for nodes to initialize..."
+    test_info "Waiting for nodes to initialize"
     _wait_for_remote_file_contains "${ip}" "${pe_log}" "Published ServiceHeartbeat" 60 1 || {
-        echo "policy_engine did not publish ServiceHeartbeat within 60 s — nodes may have crashed." >&2
+        test_warn "policy_engine did not publish ServiceHeartbeat within 60 s — nodes may have crashed."
         _dump_node_diagnostics "${ip}"
         return 1
     }
-    echo "Nodes ready. Starting ${OPT_SAMPLES} measurement samples..."
+    test_info "Collecting ${OPT_SAMPLES} samples"
 
     for ((i = 1; i <= OPT_SAMPLES; i++)); do
         _trigger_sample_cycle "${ip}"
-        if (( i % 10 == 0 )); then echo "  ${i}/${OPT_SAMPLES} samples collected"; fi
+        if (( i % 10 == 0 )); then test_info "${i}/${OPT_SAMPLES} samples collected"; fi
     done
-    echo "Measurement loop complete."
 }
 
 _collect_logs() {
     local ip="$1"
     local name tmp
 
-    echo "Collecting logs..."
+    test_info "Collecting logs"
     : > "${RAW_LOG}"
     for name in "${VEHICLE_NODE_BINS[@]}"; do
         if [[ "${TEST_PLATFORM}" == "linux" ]]; then
@@ -495,7 +498,6 @@ _collect_logs() {
             rm -f "${tmp}"
         fi
     done
-    echo "Raw log: ${RAW_LOG}"
 }
 
 _dump_node_diagnostics() {
@@ -639,40 +641,65 @@ def stats(data):
 e2e_st = stats(e2e_samples)
 rxn_st = stats(rxn_samples)
 
-e2e_pass = (not (e2e_st['p99'] != e2e_st['p99'])) and e2e_st['p99'] < e2e_limit
-rxn_pass = (not (rxn_st['p99'] != rxn_st['p99'])) and rxn_st['p99'] < rxn_limit
-overall  = e2e_pass and rxn_pass
+def run_tests():
+    results = []
 
-report = []
-report.append("SafeEDGE TPI 2.6 — Safety Path Latency Benchmark")
-report.append(f"Environment: {environment}")
-report.append(f"Raw log: {raw_log}")
-report.append(f"Samples collected: {len(e2e_samples)} E2E, {len(rxn_samples)} reaction (requested: {n_samples})")
-report.append("")
-report.append("=== E2E Latency (vehicle_mock publish -> vehicle_mock receive PolicyDecision) ===")
-report.append(f"Proposal limit: < {e2e_limit:.0f} ms   Derived KPI (P99): < {e2e_limit:.0f} ms")
-report.append("")
-report.append(f"  {'min':>8}  {'P50':>8}  {'P90':>8}  {'P95':>8}  {'P99':>8}  {'max':>8}")
-report.append(f"  {e2e_st['min']:>7.2f}ms  {e2e_st['p50']:>7.2f}ms  {e2e_st['p90']:>7.2f}ms  {e2e_st['p95']:>7.2f}ms  {e2e_st['p99']:>7.2f}ms  {e2e_st['max']:>7.2f}ms")
-report.append("")
-report.append(f"Result: {'PASS' if e2e_pass else 'FAIL'}")
-report.append("")
-report.append("=== Policy-Reaction Time (policy_engine receive -> publish PolicyDecision) ===")
-report.append(f"Proposal limit: < {rxn_limit:.0f} ms   Derived KPI (P99): < {rxn_limit:.0f} ms")
-report.append("")
-report.append(f"  {'min':>8}  {'P50':>8}  {'P90':>8}  {'P95':>8}  {'P99':>8}  {'max':>8}")
-report.append(f"  {rxn_st['min']:>7.2f}ms  {rxn_st['p50']:>7.2f}ms  {rxn_st['p90']:>7.2f}ms  {rxn_st['p95']:>7.2f}ms  {rxn_st['p99']:>7.2f}ms  {rxn_st['max']:>7.2f}ms")
-report.append("")
-report.append(f"Result: {'PASS' if rxn_pass else 'FAIL'}")
-report.append("")
-report.append(f"Overall: {'PASS' if overall else 'FAIL'}")
+    passed = len(e2e_samples) >= n_samples
+    detail = [f"    Requested: {n_samples}  Captured E2E: {len(e2e_samples)}  Reaction: {len(rxn_samples)}"]
+    results.append(("SampleCompleteness", passed, detail))
 
-text = "\n".join(report)
+    passed = not (e2e_st['p99'] != e2e_st['p99']) and e2e_st['p99'] < e2e_limit
+    detail = [
+        f"    KPI: P99 < {e2e_limit:.0f} ms  →  P99 = {e2e_st['p99']:.2f} ms",
+        f"    min={e2e_st['min']:.2f}  P50={e2e_st['p50']:.2f}  P90={e2e_st['p90']:.2f}"
+        f"  P95={e2e_st['p95']:.2f}  P99={e2e_st['p99']:.2f}  [ms]",
+    ]
+    results.append(("E2ELatency_P99", passed, detail))
+
+    passed = not (rxn_st['p99'] != rxn_st['p99']) and rxn_st['p99'] < rxn_limit
+    detail = [
+        f"    KPI: P99 < {rxn_limit:.0f} ms  →  P99 = {rxn_st['p99']:.2f} ms",
+        f"    min={rxn_st['min']:.2f}  P50={rxn_st['p50']:.2f}  P90={rxn_st['p90']:.2f}"
+        f"  P95={rxn_st['p95']:.2f}  P99={rxn_st['p99']:.2f}  [ms]",
+    ]
+    results.append(("ReactionTime_P99", passed, detail))
+
+    return results
+
+suite_name = "TPI_2_6"
+tests = run_tests()
+total        = len(tests)
+passed_count = sum(1 for _, p, _ in tests if p)
+failed_count = total - passed_count
+
+out = []
+out.append("SafeEDGE TPI 2.6 — Safety Path Latency Benchmark")
+out.append(f"Environment: {environment}")
+out.append("")
+out.append(f"[==========] {total} tests from {suite_name}.")
+out.append("[----------] Global test environment set-up.")
+out.append("")
+out.append(f"[----------] {total} tests from {suite_name}")
+for name, passed, detail in tests:
+    out.append(f"[ RUN      ] {suite_name}.{name}")
+    out.extend(detail)
+    out.append(f"{'[       OK ]' if passed else '[  FAILED  ]'} {suite_name}.{name}")
+out.append(f"[----------] {total} tests from {suite_name}")
+out.append("")
+out.append(f"[==========] {total} tests from {suite_name} ran.")
+out.append(f"[  PASSED  ] {passed_count} test(s).")
+if failed_count:
+    out.append(f"[  FAILED  ] {failed_count} test(s).")
+    for name, passed, _ in tests:
+        if not passed:
+            out.append(f"  {suite_name}.{name}")
+
+text = "\n".join(out)
 print(text)
 with open(report_path, 'w') as f:
     f.write(text + "\n")
 
-sys.exit(0 if overall else 1)
+sys.exit(1 if failed_count else 0)
 PYEOF
 }
 
@@ -739,19 +766,18 @@ if [[ "${TEST_PLATFORM}" == "qnx" ]]; then
         _refresh_vehicle_post_start_snippet
         _refresh_vehicle_system_files_snippet
         _reset_generated_target_output
-        echo "Building QNX image and starting QEMU..."
+        test_info "Building QNX image"
         mkqnximage --noprompt --run=-h --clean >/dev/null 2>&1
     else
-        echo "Starting QNX QEMU (skipping rebuild)..."
+        test_info "Starting QNX QEMU (skipping rebuild)"
         mkqnximage --noprompt --run=-h >/dev/null 2>&1
     fi
 
-    echo "Waiting for VM IP..."
+    test_info "Waiting for VM IP"
     VM_IP="$(_get_ip_address)"
-    echo "VM is up: ${VM_IP}"
-    echo "Waiting for SSH..."
+    test_info "VM is up: ${VM_IP}"
+    test_info "Waiting for VM SSH"
     _wait_for_ssh "${VM_IP}"
-    echo "VM is reachable."
 else
     if [[ "${OPT_STOP}" -eq 1 ]]; then
         echo "Stopping local Linux node processes..."
@@ -761,12 +787,11 @@ else
     fi
     _validate_vehicle_binaries
     VM_IP=""
-    echo "Running native Linux mode. No QNX image will be built."
+    test_info "Running native Linux mode. No QNX image will be built."
 fi
 
-echo "Starting vehicle nodes..."
+test_info "Starting vehicle nodes"
 _start_vehicle_nodes "${VM_IP}"
-echo "Vehicle nodes launched."
 
 if [[ "${OPT_PRIO}" -eq 1 ]]; then
     if [[ "${OPT_LOAD}" -gt 0 ]]; then
@@ -784,7 +809,7 @@ if [[ "${OPT_PRIO}" -eq 1 ]]; then
             "${NODE_LOG_DIR}/safe_edge_policy_engine.log" \
             "Published ServiceHeartbeat" \
             60 1; then
-        echo "WARNING: heartbeat not seen after 60s — querying anyway" >&2
+        test_warn "heartbeat not seen after 60s — querying anyway"
     else
         echo "Nodes up. Querying priorities..."
     fi
@@ -816,9 +841,8 @@ if [[ "${OPT_PRIO}" -eq 1 ]]; then
 fi
 
 if [[ "${OPT_LOAD}" -gt 0 ]]; then
-    echo "Starting load level ${OPT_LOAD}..."
+    test_info "Starting load level ${OPT_LOAD}"
     _start_load "${VM_IP}" "${OPT_LOAD}"
-    echo "Load stressors active."
 fi
 
 TEST_RC=0
@@ -828,12 +852,14 @@ _collect_logs "${VM_IP}"
 
 _stop_vehicle_nodes "${VM_IP}"
 if [[ "${TEST_PLATFORM}" == "qnx" ]]; then
-    echo "Stopping QNX VM..."
+    test_info "Stopping QNX VM"
     mkqnximage --stop 2>/dev/null || true
 fi
 
-echo "Generating latency report..."
+test_info "Generating latency report"
 _generate_report || TEST_RC=1
-echo "Report: ${REPORT}"
+test_artifact "Raw log" "${RAW_LOG}"
+test_artifact "Report" "${REPORT}"
 
+test_footer "TPI 2.6 - Safety Path Latency" "${TEST_RC}" "${REPORT}"
 exit "${TEST_RC}"

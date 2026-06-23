@@ -5,6 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/test_output_common.sh"
 LOG_DIR="${SCRIPT_DIR}/logs"
 RUNTIME_DIR="${LOG_DIR}/tpi_3_3_runtime"
 BASELINE_RAW_LOG="${RUNTIME_DIR}/tpi_3_3_baseline_raw.log"
@@ -142,6 +143,9 @@ fi
 
 mkdir -p "${LOG_DIR}" "${RUNTIME_DIR}"
 
+test_banner_open "TPI 3.3 - Mixed Traffic and Concurrent Workload"
+test_banner_context "${TEST_PLATFORM}" "${RUNTIME_DIR}"
+
 _validate_linux_binary() {
     local bin="$1"
     local description
@@ -178,7 +182,7 @@ _wait_for_ssh() {
     local i
     for ((i = 1; i <= max_tries; i++)); do
         if _ssh_run "${ip}" "true" >/dev/null 2>&1; then return 0; fi
-        if (( i == 1 || i % 5 == 0 )); then echo "  waiting for SSH (${i}/${max_tries})..."; fi
+        if (( i == 1 || i % 5 == 0 )); then test_info "waiting for SSH (${i}/${max_tries})..."; fi
         sleep 2
     done
     echo "Timed out waiting for SSH on ${ip}." >&2; return 1
@@ -348,7 +352,7 @@ _wait_for_remote_file_contains() {
 _start_fast_stack() {
     local host_ip="$1"
     local guest_ip="$2"
-    echo "Starting mixed traffic stack (server + edge, host_ip=${host_ip} guest_ip=${guest_ip})..."
+    test_info "Starting mixed traffic stack (server + edge)"
     rm -f /dev/shm/fastdds_* /dev/shm/sem.fastdds_* 2>/dev/null || true
 
     docker rm -f "${SERVER_CONTAINER}" 2>/dev/null || true
@@ -362,7 +366,6 @@ _start_fast_stack() {
         -e "SAFE_EDGE_INITIAL_PEERS=${guest_ip}:8011,${host_ip}:8030" \
         safe-edge-server:fast \
         >/dev/null
-    echo "  [server] container started: ${SERVER_CONTAINER}"
 
     docker run -d \
         --name "${EDGE_CONTAINER}" \
@@ -373,33 +376,30 @@ _start_fast_stack() {
         -e "SAFE_EDGE_INITIAL_PEERS=${guest_ip}:8001,${guest_ip}:8002,${guest_ip}:8011,${host_ip}:8020" \
         safe-edge-edge:fast \
         >/dev/null
-    echo "  [edge] container started: ${EDGE_CONTAINER}"
 }
 
 _wait_fast_stack() {
     local max_tries=20 i
-    echo "Waiting for server container to be running..."
+    test_info "Waiting for server container to be running"
     for ((i = 1; i <= max_tries; i++)); do
         if docker inspect -f '{{.State.Running}}' "${SERVER_CONTAINER}" 2>/dev/null | grep -q true; then
-            echo "  [server] running"
             break
         fi
         sleep 1
     done
     if (( i > max_tries )); then
-        echo "WARNING: server container did not reach running state" >&2
+        test_warn "server container did not reach running state"
     fi
 
-    echo "Waiting for edge container to be running..."
+    test_info "Waiting for edge container to be running"
     for ((i = 1; i <= max_tries; i++)); do
         if docker inspect -f '{{.State.Running}}' "${EDGE_CONTAINER}" 2>/dev/null | grep -q true; then
-            echo "  [edge] running"
             break
         fi
         sleep 1
     done
     if (( i > max_tries )); then
-        echo "WARNING: edge container did not reach running state" >&2
+        test_warn "edge container did not reach running state"
     fi
 }
 
@@ -415,18 +415,18 @@ _check_node_liveness() {
     local rc=0
     local name
     local safety_nodes=(safe_edge_policy_engine safe_edge_safety_io_adapters safe_edge_vehicle_mock)
-    echo "--- Node liveness ---"
+    test_section "Node liveness"
     if [[ "${TEST_PLATFORM}" == "linux" ]]; then
         for name in "${safety_nodes[@]}"; do
             local pid_file="${RUNTIME_DIR}/${name}.pid"
             if [[ ! -f "${pid_file}" ]]; then
-                echo "  [FAIL] ${name}: pid file missing" >&2; rc=1; continue
+                echo "[FAIL] ${name}: pid file missing" >&2; rc=1; continue
             fi
             local pid; pid="$(cat "${pid_file}")"
             if kill -0 "${pid}" 2>/dev/null; then
-                echo "  [OK]   ${name}: pid=${pid} alive"
+                echo "[OK] ${name}: pid=${pid} alive"
             else
-                echo "  [FAIL] ${name}: pid=${pid} dead (crashed during test)" >&2; rc=1
+                echo "[FAIL] ${name}: pid=${pid} dead (crashed during test)" >&2; rc=1
             fi
         done
     else
@@ -435,12 +435,12 @@ _check_node_liveness() {
             if _ssh_run "${ip}" "[ -f '${remote_pid_file}' ]" 2>/dev/null; then
                 local pid; pid="$(_ssh_run "${ip}" "cat '${remote_pid_file}'" 2>/dev/null)"
                 if _ssh_run "${ip}" "kill -0 ${pid} 2>/dev/null" 2>/dev/null; then
-                    echo "  [OK]   ${name}: pid=${pid} alive"
+                    echo "[OK] ${name}: pid=${pid} alive"
                 else
-                    echo "  [FAIL] ${name}: pid=${pid} dead (crashed)" >&2; rc=1
+                    echo "[FAIL] ${name}: pid=${pid} dead (crashed)" >&2; rc=1
                 fi
             else
-                echo "  [FAIL] ${name}: pid file missing on VM" >&2; rc=1
+                echo "[FAIL] ${name}: pid file missing on VM" >&2; rc=1
             fi
         done
     fi
@@ -576,7 +576,7 @@ _trigger_sample_cycle() {
 _wait_for_stable_nominal() {
     local ip="$1" pe_log="$2"
     local required=5 count=0 i bad t
-    echo "Waiting for ${required}s of stable NOMINAL mode..."
+    test_info "Waiting for ${required}s of stable NOMINAL mode"
     for ((i = 1; i <= 90; i++)); do
         bad=0
         # Extract individual mode values to handle concatenated log lines
@@ -598,18 +598,17 @@ _wait_for_stable_nominal() {
         fi
         if [[ "${bad}" -eq 0 ]]; then
             (( count++ )) || true
-            echo "  NOMINAL stable ${count}/${required}s..."
+            test_info "NOMINAL stable ${count}/${required}s..."
         else
-            [[ "${count}" -gt 0 ]] && echo "  Non-nominal detected — resetting counter"
+            [[ "${count}" -gt 0 ]] && test_warn "Non-nominal detected — resetting counter"
             count=0
         fi
         if (( count >= required )); then
-            echo "System stable in NOMINAL for ${required}s."
             return 0
         fi
         sleep 1
     done
-    echo "WARNING: system did not reach ${required}s stable NOMINAL within 90s — proceeding anyway" >&2
+    test_warn "system did not reach ${required}s stable NOMINAL within 90s — proceeding anyway"
     return 0
 }
 
@@ -621,7 +620,7 @@ _wait_for_nodes_ready() {
     else
         pe_log="/tmp/safe_edge_vehicle_nodes/safe_edge_policy_engine.log"
     fi
-    echo "Waiting for nodes to initialize..."
+    test_info "Waiting for nodes to initialize"
     _wait_for_remote_file_contains "${ip}" "${pe_log}" "Published ServiceHeartbeat" 60 1 || {
         echo "policy_engine did not publish ServiceHeartbeat within 60 s — nodes may have crashed." >&2
         _dump_node_diagnostics "${ip}"
@@ -633,19 +632,18 @@ _wait_for_nodes_ready() {
 _run_measurement_loop() {
     local ip="$1" label="$2"
     local i
-    echo "Starting ${OPT_SAMPLES} measurement samples [${label}] (mixed traffic active)..."
+    test_info "Collecting ${OPT_SAMPLES} samples [${label}]"
     for ((i = 1; i <= OPT_SAMPLES; i++)); do
         _trigger_sample_cycle "${ip}"
-        if (( i % 10 == 0 )); then echo "  ${i}/${OPT_SAMPLES} samples collected"; fi
+        if (( i % 10 == 0 )); then test_info "${i}/${OPT_SAMPLES} samples collected"; fi
     done
-    echo "Measurement loop complete [${label}]."
 }
 
 _collect_logs() {
     local ip="$1" dest_raw_log="$2"
     local name tmp
 
-    echo "Collecting logs → ${dest_raw_log}..."
+    test_info "Collecting logs"
     : > "${dest_raw_log}"
     for name in "${VEHICLE_NODE_BINS[@]}"; do
         if [[ "${TEST_PLATFORM}" == "linux" ]]; then
@@ -668,8 +666,6 @@ _collect_logs() {
     docker logs "${SERVER_CONTAINER}" > "${RUNTIME_DIR}/server.log" 2>&1 || true
     docker logs "${EDGE_CONTAINER}"   > "${RUNTIME_DIR}/edge.log"   2>&1 || true
 
-    echo "Server log: ${RUNTIME_DIR}/server.log"
-    echo "Edge log: ${RUNTIME_DIR}/edge.log"
 }
 
 _clear_node_logs() {
@@ -718,28 +714,28 @@ _dump_node_diagnostics() {
 
 _check_mixed_traffic_informative() {
     local rc=0
-    echo "--- Mixed traffic checks (informative) ---"
+    test_section "Mixed traffic checks (informative)"
     if docker inspect -f '{{.State.Running}}' "${SERVER_CONTAINER}" 2>/dev/null | grep -q true; then
-        echo "  [server] container active: OK"
+        echo "[server] container active: OK"
     else
-        echo "  WARNING: server container not running at end of measurement" >&2
+        test_warn "server container not running at end of measurement"
         rc=1
     fi
     if docker inspect -f '{{.State.Running}}' "${EDGE_CONTAINER}" 2>/dev/null | grep -q true; then
-        echo "  [edge] container active: OK"
+        echo "[edge] container active: OK"
     else
-        echo "  WARNING: edge container not running at end of measurement" >&2
+        test_warn "edge container not running at end of measurement"
         rc=1
     fi
     if [[ -s "${RUNTIME_DIR}/server.log" ]]; then
-        echo "  [server] log has content: OK"
+        echo "[server] log has content: OK"
     else
-        echo "  WARNING: server log is empty" >&2
+        test_warn "server log is empty"
     fi
     if [[ -s "${RUNTIME_DIR}/edge.log" ]]; then
-        echo "  [edge] log has content: OK"
+        echo "[edge] log has content: OK"
     else
-        echo "  WARNING: edge log is empty" >&2
+        test_warn "edge log is empty"
     fi
     return 0
 }
@@ -1075,15 +1071,13 @@ echo "DDS IPs: host/bridge=${BRIDGE_IP} guest=${GUEST_IP}"
 _start_fast_stack "${BRIDGE_IP}" "${GUEST_IP}"
 _wait_fast_stack
 
-echo "Starting vehicle nodes..."
+test_info "Starting vehicle nodes"
 _start_vehicle_nodes "${VM_IP}"
-echo "Vehicle nodes launched."
 
 if [[ "${OPT_PRIO}" -eq 1 ]]; then
     if [[ "${OPT_LOAD}" -gt 0 ]]; then
-        echo "Starting load level ${OPT_LOAD}..."
+        test_info "Starting load level ${OPT_LOAD}"
         _start_load "${VM_IP}" "${OPT_LOAD}"
-        echo "Load stressors launched."
     fi
     echo "Waiting for policy_engine heartbeat (up to 60s)..."
     if [[ "${TEST_PLATFORM}" == "linux" ]]; then
@@ -1095,7 +1089,7 @@ if [[ "${OPT_PRIO}" -eq 1 ]]; then
             "${NODE_LOG_DIR}/safe_edge_policy_engine.log" \
             "Published ServiceHeartbeat" \
             60 1; then
-        echo "WARNING: heartbeat not seen after 60s — querying anyway" >&2
+        test_warn "heartbeat not seen after 60s — querying anyway"
     else
         echo "Nodes up. Querying priorities..."
     fi
@@ -1135,9 +1129,8 @@ if [[ "${TEST_RC}" -eq 0 ]]; then
     if [[ "${OPT_LOAD}" -gt 0 ]]; then
         echo "=== Phase 2: Under load level ${OPT_LOAD} ==="
         _clear_node_logs "${VM_IP}"
-        echo "Starting load level ${OPT_LOAD}..."
+        test_info "Starting load level ${OPT_LOAD}"
         _start_load "${VM_IP}" "${OPT_LOAD}"
-        echo "Load stressors active."
         _run_measurement_loop "${VM_IP}" "load=${OPT_LOAD}"
         _collect_logs "${VM_IP}" "${LOADED_RAW_LOG}"
     fi
@@ -1153,12 +1146,17 @@ if [[ "${TEST_PLATFORM}" == "qnx" ]]; then
     mkqnximage --stop 2>/dev/null || true
 fi
 
-echo "Generating latency report..."
+test_info "Generating latency report"
 if [[ "${OPT_LOAD}" -gt 0 ]]; then
     _generate_report "${BASELINE_RAW_LOG}" "${LOADED_RAW_LOG}" || TEST_RC=1
 else
     _generate_report "${BASELINE_RAW_LOG}" "" || TEST_RC=1
 fi
-echo "Report: ${REPORT}"
+test_artifact "Baseline raw log" "${BASELINE_RAW_LOG}"
+if [[ "${OPT_LOAD}" -gt 0 ]]; then
+    test_artifact "Loaded raw log" "${LOADED_RAW_LOG}"
+fi
+test_artifact "Report" "${REPORT}"
 
+test_footer "TPI 3.3 - Mixed Traffic and Concurrent Workload" "${TEST_RC}" "${REPORT}"
 exit "${TEST_RC}"

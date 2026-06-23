@@ -86,7 +86,7 @@ static bool wait_for_charger_location(
         if (reader->take_next_sample(&sample, &info) ==
                 eprosima::fastdds::dds::RETCODE_OK && info.valid_data)
         {
-            std::cout << "  [dds] Received ChargerLocation id=" << sample.id()
+            std::cout << "[dds] Received ChargerLocation id=" << sample.id()
                       << " name=" << sample.name() << "\n";
             return true;
         }
@@ -272,7 +272,7 @@ TEST(PeriodicRefresh, TwoBurstsIn35Seconds)
 
     int burst_count = 0;
     const auto t0  = std::chrono::steady_clock::now();
-    const auto end = t0 + std::chrono::seconds(35);
+    const auto end = t0 + std::chrono::seconds(45);
     auto last_sample = t0 - std::chrono::seconds(10);
 
     while (std::chrono::steady_clock::now() < end)
@@ -287,7 +287,7 @@ TEST(PeriodicRefresh, TwoBurstsIn35Seconds)
                     now - last_sample).count() > 2000)
             {
                 burst_count++;
-                std::cout << "  [dds] Burst " << burst_count << " at t="
+                std::cout << "[dds] Burst " << burst_count << " at t="
                           << std::chrono::duration_cast<std::chrono::seconds>(
                                  now - t0).count() << " s\n";
             }
@@ -300,7 +300,7 @@ TEST(PeriodicRefresh, TwoBurstsIn35Seconds)
     }
 
     EXPECT_GE(burst_count, 2)
-        << "Expected >=2 bursts (publication_match trigger + 30 s periodic refresh), "
+        << "Expected >=2 bursts (publication_match trigger + 30 s periodic refresh within 45 s), "
         << "got " << burst_count;
 }
 

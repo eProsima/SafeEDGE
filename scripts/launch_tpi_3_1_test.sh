@@ -6,6 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/test_output_common.sh"
 
 QNX_USER="${USER:-$(id -un)}"
 : "${QNX_SDP_ROOT:=/home/${QNX_USER}/qnx800}"
@@ -72,6 +73,9 @@ mkdir -p "${RUNTIME_DIR}"
 LAUNCHER_LOG="${RUNTIME_DIR}/launch_tpi_3_1.log"
 exec > >(tee "${LAUNCHER_LOG}") 2>&1
 
+test_banner_open "TPI 3.1 - Cloud Outage Resilience"
+test_banner_context "${TEST_PLATFORM}" "${RUNTIME_DIR}"
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 _ssh_run() {
@@ -84,7 +88,7 @@ _wait_for_ssh() {
     local ip="$1" i
     for ((i = 1; i <= 45; i++)); do
         if _ssh_run "${ip}" "true" >/dev/null 2>&1; then return 0; fi
-        (( i == 1 || i % 5 == 0 )) && echo "  waiting for SSH (${i}/45)..."
+        (( i == 1 || i % 5 == 0 )) && test_info "waiting for SSH (${i}/45)..."
         sleep 2
     done
     echo "Timed out waiting for SSH on ${ip}." >&2; return 1
@@ -162,7 +166,7 @@ _wait_for_container_running() {
     local deadline=$(( $(date +%s) + timeout ))
     until docker ps -q --filter "name=^${name}$" | grep -q .; do
         if [[ $(date +%s) -gt ${deadline} ]]; then
-            echo "ERROR: ${name} did not start within ${timeout}s" >&2
+            test_error "${name} did not start within ${timeout}s"
             exit 1
         fi
         sleep 2
@@ -343,13 +347,12 @@ fi
 
 # ── Preflight ─────────────────────────────────────────────────────────────────
 
-echo "Building Docker images for TPI 3.1..."
+test_info "Building Docker images for TPI 3.1"
 if ! bash "${SCRIPT_DIR}/build_ubuntu.sh" > "${RUNTIME_DIR}/build_ubuntu.log" 2>&1; then
     echo "Docker image build failed. See ${RUNTIME_DIR}/build_ubuntu.log" >&2
     tail -50 "${RUNTIME_DIR}/build_ubuntu.log" >&2 || true
     exit 1
 fi
-echo "Docker images ready"
 
 _validate_binaries
 
@@ -375,21 +378,18 @@ if [[ "${TEST_PLATFORM}" == "qnx" ]]; then
     if [[ "${OPT_NO_REBUILD}" -eq 0 ]]; then
         _refresh_snippets
         rm -rf "${TARGET_DIR}/output"
-        echo "Building QNX image..."
+        test_info "Building QNX image"
         mkqnximage --noprompt --run=-h --clean >/dev/null 2>&1
-        echo "Building QNX image... done"
     else
-        echo "Starting QNX QEMU (skipping rebuild)..."
+        test_info "Starting QNX QEMU (skipping rebuild)"
         mkqnximage --noprompt --run=-h >/dev/null 2>&1
-        echo "Starting QNX QEMU... done"
     fi
 
-    echo "Waiting for VM IP..."
+    test_info "Waiting for VM IP"
     VM_IP="$(_get_ip_address)"
-    echo "VM is up: ${VM_IP}"
-    echo "Waiting for VM SSH..."
+    test_info "VM is up: ${VM_IP}"
+    test_info "Waiting for VM SSH"
     _wait_for_ssh "${VM_IP}"
-    echo "VM SSH reachable"
 fi
 
 # ── DDS IP topology ───────────────────────────────────────────────────────────
@@ -427,7 +427,7 @@ echo "Topology: safety=${PEER_SAFETY_IP} non_safety=${PEER_NON_SAFETY_IP} docker
 
 _detect_docker_network_mode
 
-echo "Starting safe-edge-server..."
+test_info "Starting safe-edge-server"
 SAFE_EDGE_OWN_IP="${DOCKER_OWN_IP}" \
 SAFE_EDGE_NON_SAFETY_IP="${PEER_NON_SAFETY_IP}" \
 SAFE_EDGE_INITIAL_PEERS="${PEER_NON_SAFETY_IP}:8011,${DOCKER_OWN_IP}:8030" \
@@ -437,13 +437,12 @@ CHILD_PIDS+=($!)
 deadline=$(( $(date +%s) + 30 ))
 until docker ps -q --filter "name=^safe-edge-server$" | grep -q .; do
     if [[ $(date +%s) -gt ${deadline} ]]; then
-        echo "ERROR: safe-edge-server did not start within 30s" >&2; exit 1
+        test_error "safe-edge-server did not start within 30s"; exit 1
     fi
     sleep 2
 done
-echo "safe-edge-server running"
 
-echo "Starting safe-edge-edge (5s delay)..."
+test_info "Starting safe-edge-edge (5s delay)"
 sleep 5
 SAFE_EDGE_OWN_IP="${DOCKER_OWN_IP}" \
 SAFE_EDGE_SAFETY_IP="${PEER_SAFETY_IP}" \
@@ -455,23 +454,20 @@ CHILD_PIDS+=($!)
 deadline=$(( $(date +%s) + 30 ))
 until docker ps -q --filter "name=^safe-edge-edge$" | grep -q .; do
     if [[ $(date +%s) -gt ${deadline} ]]; then
-        echo "ERROR: safe-edge-edge did not start within 30s" >&2; exit 1
+        test_error "safe-edge-edge did not start within 30s"; exit 1
     fi
     sleep 2
 done
-echo "safe-edge-edge running"
 
 # ── Start vehicle nodes ───────────────────────────────────────────────────────
 
-echo "Starting vehicle nodes..."
+test_info "Starting vehicle nodes"
 _start_vehicle_nodes
-echo "Vehicle nodes launched"
 
 # ── DDS convergence wait ──────────────────────────────────────────────────────
 
-echo "Waiting ${DISCOVERY_WAIT_SECS}s for DDS discovery..."
+test_info "Waiting ${DISCOVERY_WAIT_SECS}s for DDS discovery"
 sleep "${DISCOVERY_WAIT_SECS}"
-echo "DDS discovery done"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -507,22 +503,17 @@ _capture_container_network_diag "safe-edge-edge" "${RUNTIME_DIR}/docker_safe_edg
 # ── Edge baseline (setup precondition) ───────────────────────────────────────
 
 : "${EDGE_OK_TIMEOUT_SECS:=60}"
-echo "Waiting for edge baseline (HEALTH_OK, timeout ${EDGE_OK_TIMEOUT_SECS}s)..."
+test_info "Waiting for edge baseline (HEALTH_OK, timeout ${EDGE_OK_TIMEOUT_SECS}s)"
 deadline=$(( $(date +%s) + EDGE_OK_TIMEOUT_SECS ))
 until docker logs safe-edge-edge 2>&1 | grep -q "EdgeGatewayStatus status=OK"; do
     if [[ $(date +%s) -gt ${deadline} ]]; then
-        echo "WARNING: edge did not reach HEALTH_OK within ${EDGE_OK_TIMEOUT_SECS}s — proceeding anyway"
+        test_warn "edge did not reach HEALTH_OK within ${EDGE_OK_TIMEOUT_SECS}s — proceeding anyway"
         break
     fi
     sleep 2
 done
-echo "Edge baseline confirmed"
 
-# ─────────────────────────────────────────────────────────────────────────────
-
-echo ""
-echo "[----------] TPI 3.1 — Cloud Outage Resilience (${TEST_PLATFORM})"
-echo ""
+test_section "TPI 3.1 — Cloud Outage Resilience (${TEST_PLATFORM})"
 
 _check() {
     local label="$1" file="$2" pattern="$3"
@@ -574,7 +565,7 @@ _check_growing() {
 
 _print_diag_section() {
     local title="$1" file="$2" pattern="$3" lines="${4:-10}"
-    echo "[ INFO     ] ${title}:"
+    test_info "${title}:"
     grep -E "${pattern}" "${file}" 2>/dev/null | tail -n "${lines}" || true
 }
 
@@ -654,11 +645,11 @@ _print_outage_diagnosis() {
 
     echo ""
     echo "[----------] TPI 3.1 diagnosis matrix"
-    echo "[ INFO     ] policy saw server_down         : ${saw_server_down}"
-    echo "[ INFO     ] policy saw edge status         : ${saw_edge_status}"
-    echo "[ INFO     ] edge published DEGRADED        : ${saw_edge_degraded}"
-    echo "[ INFO     ] policy chose edge_available    : ${saw_policy_edge_available}"
-    echo "[ INFO     ] policy chose edge_unavailable  : ${saw_policy_edge_unavailable}"
+    [[ "${saw_server_down}" -eq 1 ]]          && test_info "policy saw server_down         : 1" || test_warn "policy saw server_down         : 0"
+    [[ "${saw_edge_status}" -eq 1 ]]          && test_info "policy saw edge status         : 1" || test_info "policy saw edge status         : 0"
+    [[ "${saw_edge_degraded}" -eq 1 ]]        && test_info "edge published DEGRADED        : 1" || test_warn "edge published DEGRADED        : 0"
+    [[ "${saw_policy_edge_available}" -eq 1 ]]   && test_info "policy chose edge_available    : 1" || test_info "policy chose edge_available    : 0"
+    [[ "${saw_policy_edge_unavailable}" -eq 1 ]] && test_info "policy chose edge_unavailable  : 1" || test_info "policy chose edge_unavailable  : 0"
 
     if [[ "${saw_server_down}" -eq 1 && "${saw_edge_degraded}" -eq 1 && "${saw_edge_status}" -eq 0 ]]; then
         echo "[ DIAG     ] edge is reacting, but policy_engine is not receiving EdgeGatewayStatus during outage"
@@ -683,12 +674,12 @@ CLOUD_LINES_BEFORE_STOP="$(_log_line_count "${RUNTIME_DIR}/safe_edge_cloud_gatew
 SIO_LINES_BEFORE_STOP="$(_log_line_count "${RUNTIME_DIR}/safe_edge_safety_io_adapters.log")"
 
 OUTAGE_TS="$(date --utc +%Y-%m-%dT%H:%M:%SZ)"
-echo "[ STEP     ] Stopping safe-edge-server"
+test_info "Stopping safe-edge-server"
 docker stop safe-edge-server >/dev/null
 docker logs safe-edge-server > "${RUNTIME_DIR}/docker_safe_edge_server.log" 2>&1 || true
-echo "[ STEP  OK ] Stopping safe-edge-server"
+test_info "Stopping safe-edge-server"
 
-echo "[ STEP     ] Waiting for propagation (${OUTAGE_HOLD_SECS}s)"
+test_info "Waiting for propagation (${OUTAGE_HOLD_SECS}s)"
 sleep "${OUTAGE_HOLD_SECS}"
 docker logs --since "${OUTAGE_TS}" safe-edge-edge > "${RUNTIME_DIR}/docker_safe_edge_edge.log" 2>&1 || true
 docker logs --since "${OUTAGE_TS}" safe-edge-server > "${RUNTIME_DIR}/docker_safe_edge_server_post_stop.log" 2>&1 || true
@@ -698,7 +689,7 @@ _extract_since_line "${RUNTIME_DIR}/safe_edge_cloud_gateway.log" "${CLOUD_LINES_
     "${RUNTIME_DIR}/safe_edge_cloud_gateway_post_stop.log"
 _extract_since_line "${RUNTIME_DIR}/safe_edge_safety_io_adapters.log" "${SIO_LINES_BEFORE_STOP}" \
     "${RUNTIME_DIR}/safe_edge_safety_io_adapters_post_stop.log"
-echo "[ STEP  OK ] Waiting for propagation (${OUTAGE_HOLD_SECS}s)"
+test_info "Waiting for propagation (${OUTAGE_HOLD_SECS}s)"
 
 # ── TEST: outage detection ────────────────────────────────────────────────────
 
@@ -727,11 +718,11 @@ SIO_LOG="$(_remote_log safe_edge_safety_io_adapters)"
 LINES_PE_BEFORE="$(_log_line_count "${PE_LOG}")"
 LINES_SIO_BEFORE="$(_log_line_count "${SIO_LOG}")"
 
-echo "[ STEP     ] Safety stability window (${STABILITY_WINDOW_SECS}s)"
+test_info "Safety stability window (${STABILITY_WINDOW_SECS}s)"
 sleep "${STABILITY_WINDOW_SECS}"
 docker logs safe-edge-edge > "${RUNTIME_DIR}/docker_safe_edge_edge_final.log" 2>&1 || true
 _collect_vehicle_logs
-echo "[ STEP  OK ] Safety stability window (${STABILITY_WINDOW_SECS}s)"
+test_info "Safety stability window (${STABILITY_WINDOW_SECS}s)"
 
 LINES_PE_AFTER="$(_log_line_count "${PE_LOG}")"
 LINES_SIO_AFTER="$(_log_line_count "${SIO_LOG}")"
@@ -756,8 +747,10 @@ else
     echo "[  FAILED  ] ${FAIL_COUNT} tests."
     _print_failure_diagnostics
     _print_outage_diagnosis
+    test_footer "TPI 3.1 - Cloud Outage Resilience" "${FAIL_COUNT}" "${RUNTIME_DIR}"
     exit ${FAIL_COUNT}
 fi
 echo ""
-echo "Evidence directory: ${RUNTIME_DIR}"
+test_artifact "Evidence directory" "${RUNTIME_DIR}"
+test_footer "TPI 3.1 - Cloud Outage Resilience" 0 "${RUNTIME_DIR}"
 exit 0

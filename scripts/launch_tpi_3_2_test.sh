@@ -7,6 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/test_output_common.sh"
 
 QNX_USER="${USER:-$(id -un)}"
 : "${QNX_SDP_ROOT:=/home/${QNX_USER}/qnx800}"
@@ -125,7 +126,7 @@ _wait_for_container_running() {
     local deadline=$(( $(date +%s) + timeout ))
     until docker ps -q --filter "name=^${name}$" | grep -q .; do
         if [[ $(date +%s) -gt ${deadline} ]]; then
-            echo "ERROR: ${name} did not start within ${timeout}s" >&2
+            test_error "${name} did not start within ${timeout}s"
             exit 1
         fi
         sleep 2
@@ -246,6 +247,8 @@ fi
 mkdir -p "${RUNTIME_DIR}"
 LAUNCHER_LOG="${RUNTIME_DIR}/launch_tpi_3_2.log"
 exec > >(tee "${LAUNCHER_LOG}") 2>&1
+test_banner_open "TPI 3.2 - Low SoC Policy Transition"
+test_banner_context "${TEST_PLATFORM}" "${RUNTIME_DIR}"
 echo "Logs: ${RUNTIME_DIR}"
 echo "Platform: ${TEST_PLATFORM}"
 echo "Low-SoC injection: soc=${LOW_SOC_VALUE} (threshold=20.0)"
@@ -310,14 +313,12 @@ else
     DOCKER_OWN_IP="${BRIDGE_IP}"
 fi
 echo "Topology: safety=${PEER_SAFETY_IP} non_safety=${PEER_NON_SAFETY_IP} docker=${DOCKER_OWN_IP}"
-echo "[DEBUG] host interfaces: $(ip -brief addr 2>/dev/null | tr '\n' '|' || true)"
-echo "[DEBUG] SAFE_EDGE_DOCKER_NETWORK=${SAFE_EDGE_DOCKER_NETWORK:-host}"
 
 # ── Start Docker containers ───────────────────────────────────────────────────
 
 _detect_docker_network_mode
 
-echo "Starting safe-edge-server..."
+test_info "Starting safe-edge-server"
 SAFE_EDGE_OWN_IP="${DOCKER_OWN_IP}" \
 SAFE_EDGE_NON_SAFETY_IP="${PEER_NON_SAFETY_IP}" \
 SAFE_EDGE_INITIAL_PEERS="${PEER_NON_SAFETY_IP}:8011,${DOCKER_OWN_IP}:8030" \
@@ -327,15 +328,12 @@ CHILD_PIDS+=($!)
 deadline=$(( $(date +%s) + 30 ))
 until docker ps -q --filter "name=^safe-edge-server$" | grep -q .; do
     if [[ $(date +%s) -gt ${deadline} ]]; then
-        echo "ERROR: safe-edge-server did not start within 30s" >&2; exit 1
+        test_error "safe-edge-server did not start within 30s"; exit 1
     fi
     sleep 2
 done
-echo "safe-edge-server running"
-echo "[DEBUG] safe-edge-server network: $(docker inspect -f '{{.HostConfig.NetworkMode}}' safe-edge-server 2>/dev/null || true)"
-echo "[DEBUG] safe-edge-server env: $(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' safe-edge-server 2>/dev/null | grep SAFE_EDGE_ | tr '\n' '|' || true)"
 
-echo "Starting safe-edge-edge (5s delay)..."
+test_info "Starting safe-edge-edge (5s delay)"
 sleep 5
 SAFE_EDGE_OWN_IP="${DOCKER_OWN_IP}" \
 SAFE_EDGE_SAFETY_IP="${PEER_SAFETY_IP}" \
@@ -347,13 +345,10 @@ CHILD_PIDS+=($!)
 deadline=$(( $(date +%s) + 30 ))
 until docker ps -q --filter "name=^safe-edge-edge$" | grep -q .; do
     if [[ $(date +%s) -gt ${deadline} ]]; then
-        echo "ERROR: safe-edge-edge did not start within 30s" >&2; exit 1
+        test_error "safe-edge-edge did not start within 30s"; exit 1
     fi
     sleep 2
 done
-echo "safe-edge-edge running"
-echo "[DEBUG] safe-edge-edge network: $(docker inspect -f '{{.HostConfig.NetworkMode}}' safe-edge-edge 2>/dev/null || true)"
-echo "[DEBUG] safe-edge-edge env: $(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' safe-edge-edge 2>/dev/null | grep SAFE_EDGE_ | tr '\n' '|' || true)"
 
 # ── Create SOC input file (starts HIGH) ──────────────────────────────────────
 
@@ -363,9 +358,8 @@ echo "SOC input file: ${LOW_SOC_FILE} (initial soc=${HIGH_SOC_VALUE})"
 
 # ── Start vehicle nodes ───────────────────────────────────────────────────────
 
-echo "Starting vehicle nodes (initial soc=${HIGH_SOC_VALUE})..."
+test_info "Starting vehicle nodes (initial soc=${HIGH_SOC_VALUE})"
 _start_vehicle_nodes
-echo "Vehicle nodes launched"
 
 pe_log="${RUNTIME_DIR}/safe_edge_policy_engine.log"
 cg_log="${RUNTIME_DIR}/safe_edge_cloud_gateway.log"
@@ -374,17 +368,8 @@ edge_log="${RUNTIME_DIR}/docker_safe_edge_edge.log"
 
 # ── DDS convergence wait ──────────────────────────────────────────────────────
 
-echo "Waiting ${DISCOVERY_WAIT_SECS}s for DDS discovery..."
+test_info "Waiting ${DISCOVERY_WAIT_SECS}s for DDS discovery"
 sleep "${DISCOVERY_WAIT_SECS}"
-echo "DDS discovery done"
-echo "[DEBUG] pe_log PolicyDecision modes so far: $(grep -oE 'mode=[0-9]+' "${pe_log}" 2>/dev/null | sort | uniq -c || echo none)"
-echo "[DEBUG] pe_log server_availability received: $(grep -c 'Received ServerAvailabilityStatus' "${pe_log}" 2>/dev/null || echo 0)"
-echo "[DEBUG] pe_log heartbeat received: $(grep -c 'Received.*ServiceHeartbeat\|ServiceHeartbeat.*received' "${pe_log}" 2>/dev/null || echo 0)"
-echo "[DEBUG] cg_log server_up/server_lost: $(grep -E "server_up|server_lost|ServerAvailability|Received.*ServiceHeartbeat|Forwarding" "${cg_log}" 2>/dev/null | tail -5 || echo none)"
-echo "[DEBUG] cg_log heartbeat published: $(grep -c 'Published ServiceHeartbeat' "${cg_log}" 2>/dev/null || echo 0)"
-echo "[DEBUG] cg_log last 3 lines: $(tail -3 "${cg_log}" 2>/dev/null || echo none)"
-echo "[DEBUG] host port bindings (DDS metatraffic): $(ss -lunpt 2>/dev/null | grep -E ':(8001|8002|8003|8011|8012|8013|8020|8030)\b' | awk '{print $5}' | tr '\n' '|' || echo none)"
-echo "[DEBUG] docker containers: $(docker ps --format '{{.Names}}:{{.Status}}' 2>/dev/null | tr '\n' '|' || true)"
 
 # ── Evidence checks (helpers) ─────────────────────────────────────────────────
 
@@ -457,15 +442,14 @@ echo "Waiting for low_soc PolicyDecision (timeout ${LOW_SOC_TIMEOUT_SECS}s)..."
 _deadline=$(( $(date +%s) + LOW_SOC_TIMEOUT_SECS ))
 until grep -qE "Published PolicyDecision.*mode=2" "${pe_log}" 2>/dev/null; do
     if [[ $(date +%s) -gt ${_deadline} ]]; then
-        echo "ERROR: low_soc PolicyDecision did not appear within ${LOW_SOC_TIMEOUT_SECS}s" >&2
-        echo "[DEBUG] pe_log last PolicyDecision lines:"
-        grep "Published PolicyDecision" "${pe_log}" 2>/dev/null | tail -5 || echo "[DEBUG] none"
-        echo "[DEBUG] pe_log Received ServerAvailabilityStatus: $(grep -c 'Received ServerAvailabilityStatus' "${pe_log}" 2>/dev/null || echo 0)"
-        echo "[DEBUG] pe_log heartbeat received: $(grep -c 'Received.*ServiceHeartbeat\|ServiceHeartbeat.*received' "${pe_log}" 2>/dev/null || echo 0)"
-        echo "[DEBUG] cg_log server_up/server_lost: $(grep -E "server_up|server_lost|ServerAvailability|Received.*ServiceHeartbeat|Forwarding" "${cg_log}" 2>/dev/null | tail -5 || echo none)"
-        echo "[DEBUG] cg_log last 5 lines: $(tail -5 "${cg_log}" 2>/dev/null || echo none)"
-        echo "[DEBUG] host port bindings: $(ss -lunpt 2>/dev/null | grep -E ':(8001|8002|8003|8011|8012|8013|8020|8030)\b' | awk '{print $5}' | tr '\n' '|' || echo none)"
-        echo "[DEBUG] docker server logs tail:"
+        test_error "low_soc PolicyDecision did not appear within ${LOW_SOC_TIMEOUT_SECS}s"
+        test_warn "Failure diagnostics: policy tail"
+        grep "Published PolicyDecision" "${pe_log}" 2>/dev/null | tail -5 || test_warn "none"
+        test_warn "Failure diagnostics: policy server availability count = $(n=$(grep -c 'Received ServerAvailabilityStatus' "${pe_log}" 2>/dev/null); echo "${n:-0}")"
+        test_warn "Failure diagnostics: policy heartbeat count = $(n=$(grep -c 'Received.*ServiceHeartbeat\|ServiceHeartbeat.*received' "${pe_log}" 2>/dev/null); echo "${n:-0}")"
+        test_warn "Failure diagnostics: cloud tail"
+        grep -E "server_up|server_lost|ServerAvailability|Received.*ServiceHeartbeat|Forwarding" "${cg_log}" 2>/dev/null | tail -5 || test_warn "none"
+        test_warn "Failure diagnostics: docker server tail"
         docker logs safe-edge-server 2>&1 | tail -5 || true
         break
     fi
@@ -525,8 +509,10 @@ echo "[----------] ${TOTAL_COUNT} tests from TPI 3.2"
 echo "[  PASSED  ] ${PASS_COUNT} / ${TOTAL_COUNT}"
 if [[ "${FAIL_COUNT}" -gt 0 ]]; then
     echo "[  FAILED  ] ${FAIL_COUNT} tests."
+    test_footer "TPI 3.2 - Low SoC Policy Transition" "${FAIL_COUNT}" "${RUNTIME_DIR}"
     exit ${FAIL_COUNT}
 fi
 echo ""
-echo "Evidence directory: ${RUNTIME_DIR}"
+test_artifact "Evidence directory" "${RUNTIME_DIR}"
+test_footer "TPI 3.2 - Low SoC Policy Transition" 0 "${RUNTIME_DIR}"
 exit 0
