@@ -1,0 +1,67 @@
+# Local IDE / agent state
+.vscode/
+.claude/settings.local.json
+.codex
+**/.vscode/
+
+# Generic build/install outputs
+build/
+install/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+*.o
+*.a
+*.so
+*.d
+*.dep
+*build*
+*install*
+*include*
+!*build*.sh
+
+# Generated QNX artifacts
+qnx/build/
+qnx/install/
+qnx/targets/*/output/
+scripts/logs/
+
+# Repo-local QNX assets are intentionally versionable even though the generic
+# build/install/include patterns above would otherwise hide parts of them.
+!qnx/
+!qnx/toolchains/
+!qnx/toolchains/**
+!qnx/targets/
+!qnx/targets/qemu-qnx800-*/
+!qnx/targets/qemu-qnx800-*/mkqnximage-wrapper.sh
+!qnx/targets/qemu-qnx800-*/local/
+!qnx/targets/qemu-qnx800-*/local/options
+!qnx/targets/qemu-qnx800-*/local/valgrind.files
+!qnx/targets/qemu-qnx800-*/local/misc_files/
+!qnx/targets/qemu-qnx800-*/local/snippets/
+!qnx/targets/qemu-qnx800-*/local/snippets/data_files.custom
+!qnx/targets/qemu-qnx800-*/local/snippets/ifs_files.custom
+!qnx/targets/qemu-qnx800-*/local/snippets/profile.custom
+
+# Local QNX keys/credentials and generated snippets are rewritten by QNX tooling
+# or by the TPI launch scripts and must not be committed.
+qnx/targets/qemu-qnx800-*/local/misc_files/*
+qnx/targets/qemu-qnx800-*/local/ssh-ident
+qnx/targets/qemu-qnx800-*/local/snippets/ifs_start.custom
+qnx/targets/qemu-qnx800-*/local/snippets/post_start.custom
+qnx/targets/qemu-qnx800-*/local/snippets/system_files.custom
+
+# fast_dds/ FastDDS components — source and generated IDL files are intentionally versioned.
+# The broad patterns above (*include*, *build*, *install*) would otherwise hide them.
+!fast_dds/
+!fast_dds/**
+fast_dds/build/
+fast_dds/install/
+
+# SafeDDS component headers are source files, not generated build artifacts.
+!safe_dds/*/include/
+!safe_dds/*/include/**
+!common_server/include/
+!common_server/include/**

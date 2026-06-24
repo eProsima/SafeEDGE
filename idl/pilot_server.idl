@@ -1,0 +1,77 @@
+#include "common.idl"
+
+module safe_edge {
+module pilot_server {
+
+const unsigned long MAX_CHARGER_LOCATIONS = 200;
+const unsigned long MAX_CHARGER_TYPES = 64;
+const unsigned long MAX_CHARGING_SESSIONS = 1000;
+const unsigned long MAX_ROUTE_METRICS = 512;
+
+struct ChargerLocation
+{
+    long id;
+    string name;
+    safe_edge::common::GeoPoint position;
+};
+
+typedef sequence<ChargerLocation, MAX_CHARGER_LOCATIONS> ChargerLocationSeq;
+
+struct ChargerType
+{
+    long id;
+    string charger_type;
+};
+
+typedef sequence<ChargerType, MAX_CHARGER_TYPES> ChargerTypeSeq;
+
+struct ChargingSession
+{
+    long id;
+    long station_id;
+    string charger_type_id;
+    double consume_wh;
+    long duration_min;
+    string date_iso8601;
+    string ingested_at_iso8601;
+};
+
+typedef sequence<ChargingSession, MAX_CHARGING_SESSIONS> ChargingSessionSeq;
+
+struct TransitHealth
+{
+    string status;
+    double last_fetch_ts;
+};
+
+struct RouteMetric
+{
+    string route_id;
+    long updates_count;
+};
+
+typedef sequence<RouteMetric, MAX_ROUTE_METRICS> RouteMetricSeq;
+
+struct TransitMetrics
+{
+    RouteMetricSeq by_route;
+    long vehicles_seen;
+};
+
+enum RequestedDataType
+{
+    CHARGER_LOCATION,
+    CHARGER_TYPE,
+    CHARGING_SESSION,
+    TRANSIT_HEALTH,
+    TRANSIT_METRICS
+};
+
+struct ServerQuery
+{
+    string requested_by;
+    RequestedDataType requested_data_type;
+};
+
+};
+};

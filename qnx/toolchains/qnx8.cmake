@@ -1,0 +1,53 @@
+set(CMAKE_SYSTEM_NAME QNX)
+set(CMAKE_SYSTEM_VERSION 8.0.0)
+
+# QNX cross-builds cannot execute target binaries during configure.
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+
+if(DEFINED QNX_HOST)
+    set(_qnx_host "${QNX_HOST}")
+elseif(DEFINED ENV{QNX_HOST})
+    set(_qnx_host "$ENV{QNX_HOST}")
+else()
+    message(FATAL_ERROR "QNX_HOST is not set. Export QNX_HOST before running CMake.")
+endif()
+
+if(DEFINED QNX_TARGET)
+    set(_qnx_target "${QNX_TARGET}")
+elseif(DEFINED ENV{QNX_TARGET})
+    set(_qnx_target "$ENV{QNX_TARGET}")
+else()
+    message(FATAL_ERROR "QNX_TARGET is not set. Export QNX_TARGET before running CMake.")
+endif()
+
+set(QNX_ARCH "x86_64" CACHE STRING "QNX target architecture (x86_64 or aarch64le)")
+set_property(CACHE QNX_ARCH PROPERTY STRINGS x86_64 aarch64le)
+
+if(QNX_ARCH STREQUAL "x86_64")
+    set(_qnx_tool_prefix "ntox86_64")
+    set(CMAKE_SYSTEM_PROCESSOR "x86_64")
+elseif(QNX_ARCH STREQUAL "aarch64le")
+    set(_qnx_tool_prefix "ntoaarch64")
+    set(CMAKE_SYSTEM_PROCESSOR "aarch64")
+else()
+    message(FATAL_ERROR "Unsupported QNX_ARCH='${QNX_ARCH}'. Use x86_64 or aarch64le.")
+endif()
+
+set(ENV{QNX_HOST} "${_qnx_host}")
+set(ENV{QNX_TARGET} "${_qnx_target}")
+set(ENV{PATH} "${_qnx_host}/usr/bin:$ENV{PATH}")
+
+set(CMAKE_SYSROOT "${_qnx_target}" CACHE PATH "QNX target sysroot" FORCE)
+set(CMAKE_C_COMPILER "${_qnx_host}/usr/bin/${_qnx_tool_prefix}-gcc" CACHE FILEPATH "QNX C compiler" FORCE)
+set(CMAKE_CXX_COMPILER "${_qnx_host}/usr/bin/${_qnx_tool_prefix}-g++" CACHE FILEPATH "QNX C++ compiler" FORCE)
+set(CMAKE_AR "${_qnx_host}/usr/bin/${_qnx_tool_prefix}-ar" CACHE FILEPATH "QNX archiver" FORCE)
+set(CMAKE_RANLIB "${_qnx_host}/usr/bin/${_qnx_tool_prefix}-ranlib" CACHE FILEPATH "QNX ranlib" FORCE)
+set(CMAKE_STRIP "${_qnx_host}/usr/bin/${_qnx_tool_prefix}-strip" CACHE FILEPATH "QNX strip" FORCE)
+set(CMAKE_C_FLAGS_INIT "${CMAKE_C_FLAGS_INIT} -D_QNX_SOURCE")
+set(CMAKE_CXX_FLAGS_INIT "${CMAKE_CXX_FLAGS_INIT} -D_QNX_SOURCE")
+
+set(CMAKE_FIND_ROOT_PATH "${_qnx_target}/${QNX_ARCH}" "${_qnx_target}" CACHE STRING "QNX root paths for find_*" FORCE)
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
