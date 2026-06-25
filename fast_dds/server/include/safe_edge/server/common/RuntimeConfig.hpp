@@ -3,6 +3,8 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace safe_edge {
 namespace server {
@@ -13,6 +15,9 @@ struct RuntimeConfig
     std::string participant_name;
     uint32_t domain_id = 0U;
     uint16_t participant_port = 0U;
+    std::string own_ip = "127.0.0.1";
+    std::string non_safety_ip = "127.0.0.1";
+    std::vector<std::pair<std::string, uint16_t>> initial_peers;
 
     std::string pilot_server_base_url;
     std::string pilot_server_api_key;

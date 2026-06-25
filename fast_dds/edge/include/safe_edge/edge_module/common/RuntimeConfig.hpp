@@ -3,6 +3,8 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace safe_edge {
 namespace edge_module {
@@ -16,6 +18,9 @@ struct RuntimeConfig
     uint32_t domain_id = 0U;
     uint16_t participant_port = 0U;
     uint32_t status_interval_sec = 5U;
+    std::string own_ip = "127.0.0.1";
+    std::string safety_ip = "127.0.0.1";
+    std::vector<std::pair<std::string, uint16_t>> initial_peers;
 };
 
 RuntimeConfig make_edge_gateway_runtime_config();

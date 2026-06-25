@@ -28,5 +28,7 @@ ENV FASTDDS_BUILTIN_TRANSPORTS=UDPv4
 ENV SAFE_EDGE_FAST_SERVER_BIN=${SERVER_INSTALL_PREFIX}/bin/safe_edge_server
 
 COPY --from=build ${SERVER_INSTALL_PREFIX} ${SERVER_INSTALL_PREFIX}
+COPY fast_dds/docker/server-test-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
-ENTRYPOINT ["/opt/safe-edge/server/bin/test_server_integration"]
+ENTRYPOINT ["/entrypoint.sh", "/opt/safe-edge/server/bin/test_server_integration"]

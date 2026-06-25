@@ -1,0 +1,2 @@
+# local/snippets/data_files.opt_guest
+# Intentionally empty. Guest bundle is generated into data_files.custom by the launcher.

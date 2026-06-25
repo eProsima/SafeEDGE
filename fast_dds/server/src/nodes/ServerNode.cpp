@@ -183,17 +183,37 @@ bool ServerNode::create_participant()
     participant_qos.name(runtime_config_.participant_name);
 
     eprosima::fastdds::rtps::Locator_t announced_locator;
-    eprosima::fastdds::rtps::IPLocator::setIPv4(announced_locator, "127.0.0.1");
+    eprosima::fastdds::rtps::IPLocator::setIPv4(announced_locator, runtime_config_.own_ip);
     announced_locator.port = runtime_config_.participant_port;
     participant_qos.wire_protocol().builtin.metatrafficUnicastLocatorList.push_back(announced_locator);
+    announced_locator.port = 0;
+    participant_qos.wire_protocol().default_unicast_locator_list.push_back(announced_locator);
+    participant_qos.wire_protocol().builtin.avoid_builtin_multicast = true;
 
-    static constexpr uint16_t peer_ports[] = { 8011U, 8030U };
-    for (uint16_t port : peer_ports)
+    if (!runtime_config_.initial_peers.empty())
     {
-        eprosima::fastdds::rtps::Locator_t peer;
-        eprosima::fastdds::rtps::IPLocator::setIPv4(peer, "127.0.0.1");
-        peer.port = port;
-        participant_qos.wire_protocol().builtin.initialPeersList.push_back(peer);
+        for (const auto& p : runtime_config_.initial_peers)
+        {
+            eprosima::fastdds::rtps::Locator_t peer;
+            eprosima::fastdds::rtps::IPLocator::setIPv4(peer, p.first);
+            peer.port = p.second;
+            participant_qos.wire_protocol().builtin.initialPeersList.push_back(peer);
+        }
+    }
+    else
+    {
+        {
+            eprosima::fastdds::rtps::Locator_t peer;
+            eprosima::fastdds::rtps::IPLocator::setIPv4(peer, runtime_config_.non_safety_ip);
+            peer.port = 8011U;
+            participant_qos.wire_protocol().builtin.initialPeersList.push_back(peer);
+        }
+        {
+            eprosima::fastdds::rtps::Locator_t peer;
+            eprosima::fastdds::rtps::IPLocator::setIPv4(peer, runtime_config_.own_ip);
+            peer.port = 8030U;
+            participant_qos.wire_protocol().builtin.initialPeersList.push_back(peer);
+        }
     }
 
     eprosima::fastdds::dds::StatusMask participant_mask =

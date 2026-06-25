@@ -1,0 +1,11 @@
+# local/snippets/ifs_files.custom
+# Waits for /dev/hd0t177 (virtio-blk partition node) before mounting.
+[-dupignore]
+[perms=555] mount_fs.sh = {
+#!/bin/sh
+while ! test -e /dev/hd0t177; do waitfor /dev/hd0t177 10; done
+while ! dd if=/dev/hd0t177 of=/dev/null bs=512 count=1 2>/dev/null; do sleep 2; done
+exec /proc/boot/mount_fs_orig.sh "$@"
+}
+[+dupignore]
+[perms=555] mount_fs_orig.sh=output/build/mount_fs.sh

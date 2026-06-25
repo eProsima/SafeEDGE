@@ -195,9 +195,33 @@ bool EdgeGatewayNode::create_participant()
     participant_qos.name(runtime_config_.participant_name);
 
     eprosima::fastdds::rtps::Locator_t locator;
-    eprosima::fastdds::rtps::IPLocator::setIPv4(locator, "127.0.0.1");
+    eprosima::fastdds::rtps::IPLocator::setIPv4(locator, runtime_config_.own_ip);
     locator.port = runtime_config_.participant_port;
     participant_qos.wire_protocol().builtin.metatrafficUnicastLocatorList.push_back(locator);
+    locator.port = 0;
+    participant_qos.wire_protocol().default_unicast_locator_list.push_back(locator);
+    participant_qos.wire_protocol().builtin.avoid_builtin_multicast = true;
+
+    if (!runtime_config_.initial_peers.empty())
+    {
+        for (const auto& p : runtime_config_.initial_peers)
+        {
+            eprosima::fastdds::rtps::Locator_t peer;
+            eprosima::fastdds::rtps::IPLocator::setIPv4(peer, p.first);
+            peer.port = p.second;
+            participant_qos.wire_protocol().builtin.initialPeersList.push_back(peer);
+        }
+    }
+    else
+    {
+        for (uint16_t safety_port : {8001U, 8002U})
+        {
+            eprosima::fastdds::rtps::Locator_t peer;
+            eprosima::fastdds::rtps::IPLocator::setIPv4(peer, runtime_config_.safety_ip);
+            peer.port = safety_port;
+            participant_qos.wire_protocol().builtin.initialPeersList.push_back(peer);
+        }
+    }
 
     eprosima::fastdds::dds::StatusMask participant_mask =
         eprosima::fastdds::dds::StatusMask::publication_matched();

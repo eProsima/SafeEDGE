@@ -63,11 +63,15 @@ require_path "${WORKSPACE_ROOT}/README.md"
 require_path "${WORKSPACE_ROOT}/common_server/CMakeLists.txt"
 require_path "${WORKSPACE_ROOT}/safe_dds/server/CMakeLists.txt"
 require_path "${WORKSPACE_ROOT}/safe_dds/edge/CMakeLists.txt"
+require_path "${WORKSPACE_ROOT}/safe_dds/safety/CMakeLists.txt"
+require_path "${WORKSPACE_ROOT}/safe_dds/non_safety/CMakeLists.txt"
 require_path "${WORKSPACE_ROOT}/scripts/build_qnx.sh"
 require_path "${WORKSPACE_ROOT}/scripts/build_safedds_qnx.sh"
 require_path "${WORKSPACE_ROOT}/scripts/launch_tpi_2_1_test.sh"
 require_path "${WORKSPACE_ROOT}/scripts/launch_tpi_2_2_test.sh"
 require_path "${WORKSPACE_ROOT}/scripts/launch_tpi_2_3_test.sh"
+require_path "${WORKSPACE_ROOT}/scripts/launch_tpi_2_5_test.sh"
+require_path "${WORKSPACE_ROOT}/scripts/aux_vehicle_nodes.sh"
 
 if (( LINUX_ONLY )); then
     echo "Linux-only setup check completed."
@@ -119,7 +123,7 @@ require_path "${SAFE_DDS_PATH}"
 
 if [[ ! -d "${WORKSPACE_ROOT}/qnx/install/safedds-qnx8-${QNX_ARCH}/safedds" ]]; then
     echo "Safe DDS QNX install not found yet."
-    echo "Build it with: bash build_safedds_qnx.sh -- -j2"
+    echo "Build it with: bash scripts/build_safedds_qnx.sh -- -j2"
 fi
 
 echo "Setup check completed."

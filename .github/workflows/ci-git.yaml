@@ -36,5 +36,66 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - name: Hello World
-        run: echo "Hello World"
+      - name: Check prerequisites
+        run: |
+          ok=1
+          check() {
+            if ! eval "$2" >/dev/null 2>&1; then
+              echo "MISSING: $1" >&2
+              ok=0
+            else
+              echo "OK: $1"
+            fi
+          }
+
+          check "cmake"                "command -v cmake"
+          check "g++"                  "command -v g++"
+          check "libcurl4-openssl-dev" "dpkg -s libcurl4-openssl-dev"
+          check "docker"               "command -v docker"
+          check "python3"              "command -v python3"
+
+          [[ "${ok}" -eq 1 ]] || { echo "One or more prerequisites are missing. Aborting." >&2; exit 1; }
+
+      - name: Build Ubuntu
+        run: bash scripts/build_native.sh
+
+      - name: Inject pilot server config
+        env:
+          PILOT_API_KEY: ${{ secrets.PILOT_API_KEY }}
+        run: |
+          if [[ -z "${PILOT_API_KEY}" ]]; then
+            echo "Secret PILOT_API_KEY is not set or empty. Aborting." >&2
+            exit 1
+          fi
+          printf '[pilot_server]\napi_key = %s\n' "${PILOT_API_KEY}" \
+              > /etc/safe-edge/server.ini
+
+      - name: Test - Fast DDS server
+        env:
+          PILOT_API_KEY: ${{ secrets.PILOT_API_KEY }}
+        run: bash scripts/launch_fast_server.sh --test
+
+      - name: Test - Fast DDS edge
+        run: bash scripts/launch_fast_edge.sh --test
+
+      - name: Clear - Docker Images
+        run: |
+          docker stop safe_edge_server:fast || true
+          docker stop safe_edge_edge:fast || true
+          docker rmi -f safe-edge-server:fast || true
+          docker rmi -f safe-edge-edge:fast || true
+
+      - name: Test - TPI 2.1
+        run: bash scripts/launch_tpi_2_1_test.sh --linux --no-rebuild
+
+      - name: Test - TPI 2.2
+        run: bash scripts/launch_tpi_2_2_test.sh --linux --no-rebuild
+
+      - name: Test - TPI 2.3
+        run: bash scripts/launch_tpi_2_3_test.sh
+
+      - name: Test - TPI 2.5
+        run: bash scripts/launch_tpi_2_5_test.sh --linux --no-rebuild
+
+      - name: Test - TPI 2.6
+        run: bash scripts/launch_tpi_2_6_test.sh --linux --no-rebuild

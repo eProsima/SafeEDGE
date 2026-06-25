@@ -119,7 +119,8 @@ public:
     void TearDown() override
     {
         std::cout << "[env] Stopping safe_edge_server...\n";
-        std::system("pkill -f safe_edge_server 2>/dev/null || true");
+        cont int res = std::system("pkill -f safe_edge_server 2>/dev/null || true");
+        (void) res;
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 };

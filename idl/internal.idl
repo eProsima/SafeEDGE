@@ -1,0 +1,78 @@
+#include "common.idl"
+
+module safe_edge {
+module internal {
+
+struct BatteryState
+{
+    safe_edge::common::Header header;
+    float soc_pct;
+    float available_charge_kw;
+    float available_discharge_kw;
+    boolean v2g_ready;
+};
+
+struct VehicleSafetyState
+{
+    safe_edge::common::Header header;
+    float speed_mps;
+    boolean braking_available;
+    boolean steering_available;
+    boolean emergency_stop;
+    boolean adas_fault;
+};
+
+struct SafetyInputFrame
+{
+    safe_edge::common::Header header;
+    BatteryState battery;
+    VehicleSafetyState safety;
+};
+
+struct PolicyDecision
+{
+    safe_edge::common::Header header;
+    safe_edge::common::PolicyMode mode;
+    string reason;
+    boolean allow_non_safety;
+    boolean allow_ota;
+};
+
+struct ChargingQuery
+{
+    safe_edge::common::Header header;
+    float soc_pct;
+};
+
+struct ChargingResponse
+{
+    safe_edge::common::Header header;
+    long preferred_charger_id;
+    string preferred_charger_name;
+    boolean has_charger;
+};
+
+struct RouteContextQuery
+{
+    safe_edge::common::Header header;
+    safe_edge::common::HealthStatus vehicle_health;
+};
+
+struct RouteContextResponse
+{
+    safe_edge::common::Header header;
+    string<32> transit_status;
+    long max_route_updates;
+    long vehicles_seen;
+    boolean has_data;
+};
+
+struct ServerAvailabilityStatus
+{
+    safe_edge::common::Header header;
+    boolean server_available;
+    string detail;
+};
+
+};
+};
