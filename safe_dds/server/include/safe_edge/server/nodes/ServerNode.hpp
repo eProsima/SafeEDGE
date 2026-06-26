@@ -83,6 +83,7 @@ private:
     bool create_executor();
 
     void on_server_query_received(const safe_edge::pilot_server::ServerQuery& query);
+    void check_pilot_server_liveliness() noexcept;
     void publish_heartbeat();
 
     void request_pilot_server_data(safe_edge::pilot_server::RequestedDataType resource) noexcept;
@@ -104,7 +105,9 @@ private:
     eprosima::safedds::execution::Timer heartbeat_timer_;
     eprosima::safedds::execution::Timer refresh_timer_;
     eprosima::safedds::execution::Timer uptime_timer_;
+    eprosima::safedds::execution::Timer check_server_liveliness_timer_;
     std::chrono::steady_clock::time_point start_time_;
+    bool pilot_server_available_ = true;
 
     eprosima::safedds::dds::DomainParticipant* participant_ = nullptr;
     eprosima::safedds::dds::Publisher* publisher_ = nullptr;

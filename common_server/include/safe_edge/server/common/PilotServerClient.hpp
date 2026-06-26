@@ -20,6 +20,9 @@ public:
     // The api_key never appears in any log output.
     std::string fetch(const std::string& endpoint) noexcept;
 
+    // Returns true only when the pilot server responds successfully with usable data.
+    bool is_pilot_server_available() noexcept;
+
 private:
     bool load_api_key(const std::string& ini_path);
 
