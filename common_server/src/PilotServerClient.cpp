@@ -12,6 +12,10 @@ namespace common {
 
 namespace {
 
+static constexpr long CURL_CONNECT_TIMEOUT_MS = 1000L;
+static constexpr long CURL_TOTAL_TIMEOUT_MS = 2000L;
+static constexpr const char* PILOT_SERVER_AVAILABILITY_ENDPOINT = "/api/chargers/locations";
+
 static size_t write_callback(void* ptr, size_t size, size_t nmemb, void* userdata)
 {
     static_cast<std::string*>(userdata)->append(
@@ -136,6 +140,8 @@ std::string PilotServerClient::fetch(
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER,    headers);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA,     &body);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, CURL_CONNECT_TIMEOUT_MS);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS,        CURL_TOTAL_TIMEOUT_MS);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
 
@@ -154,6 +160,67 @@ std::string PilotServerClient::fetch(
     std::cout << "[pilot_client] GET " << endpoint
               << " bytes=" << body.size() << std::endl;
     return body;
+}
+
+bool PilotServerClient::is_pilot_server_available() noexcept
+{
+    if (!ready_)
+    {
+        std::cerr << "[pilot_client] Not ready — check config file" << std::endl;
+        return false;
+    }
+
+    CURL* curl = curl_easy_init();
+    if (nullptr == curl)
+    {
+        std::cerr << "[pilot_client] curl_easy_init failed" << std::endl;
+        return false;
+    }
+
+    const std::string auth = "X-API-KEY: " + api_key_;
+    struct curl_slist* headers = curl_slist_append(nullptr, auth.c_str());
+    std::string body;
+
+    const std::string url = base_url_ + PILOT_SERVER_AVAILABILITY_ENDPOINT;
+
+    curl_easy_setopt(curl, CURLOPT_URL,             url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER,      headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,   write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA,       &body);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, CURL_CONNECT_TIMEOUT_MS);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS,        CURL_TOTAL_TIMEOUT_MS);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER,  0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST,  0L);
+
+    const CURLcode res = curl_easy_perform(curl);
+
+    long http_code = 0;
+    if (res == CURLE_OK)
+    {
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+    }
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK)
+    {
+        std::cerr << "[pilot_client] Availability probe failed endpoint="
+                  << PILOT_SERVER_AVAILABILITY_ENDPOINT << " error="
+                  << curl_easy_strerror(res) << std::endl;
+        return false;
+    }
+
+    const bool ok = (http_code >= 200 && http_code < 300) && !body.empty();
+
+    std::cout << "[pilot_client] Availability probe endpoint="
+              << PILOT_SERVER_AVAILABILITY_ENDPOINT
+              << " status=" << http_code
+              << " bytes=" << body.size()
+              << " available=" << (ok ? "true" : "false")
+              << std::endl;
+
+    return ok;
 }
 
 } // namespace common
