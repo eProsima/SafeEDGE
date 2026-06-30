@@ -164,17 +164,27 @@ int EdgeGatewayNode::run()
         return 1;
     }
 
-    next_status_fire_ = std::chrono::steady_clock::now() +
-        std::chrono::seconds(runtime_config_.status_interval_sec);
+    const auto t0 = std::chrono::steady_clock::now();
+    next_status_fire_ = t0 + std::chrono::milliseconds(100);
+    auto next_hb_fire = t0 + std::chrono::milliseconds(100);
 
     std::cout << "[edge_gateway] [START] Running with participant port "
               << runtime_config_.participant_port << std::endl;
 
     while (true)
     {
-        std::this_thread::sleep_until(next_status_fire_);
-        publish_edge_gateway_status();
-        next_status_fire_ += std::chrono::seconds(runtime_config_.status_interval_sec);
+        std::this_thread::sleep_until(std::min(next_status_fire_, next_hb_fire));
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= next_status_fire_)
+        {
+            publish_edge_gateway_status();
+            next_status_fire_ += std::chrono::milliseconds(100);
+        }
+        if (now >= next_hb_fire)
+        {
+            publish_heartbeat();
+            next_hb_fire += std::chrono::milliseconds(100);
+        }
     }
 
     return 0;
@@ -336,6 +346,14 @@ bool EdgeGatewayNode::create_endpoints()
         nullptr,
         eprosima::fastdds::dds::StatusMask::none());
 
+    eprosima::fastdds::dds::DataWriterQos hb_writer_qos{};
+    hb_writer_qos.reliability().kind = eprosima::fastdds::dds::RELIABLE_RELIABILITY_QOS;
+    service_heartbeat_datawriter_ = publisher_->create_datawriter(
+        service_heartbeat_topic_,
+        hb_writer_qos,
+        nullptr,
+        eprosima::fastdds::dds::StatusMask::none());
+
     eprosima::fastdds::dds::DataReaderQos reader_qos{};
     reader_qos.reliability().kind = eprosima::fastdds::dds::RELIABLE_RELIABILITY_QOS;
 
@@ -358,6 +376,7 @@ bool EdgeGatewayNode::create_endpoints()
     const bool success =
         nullptr != energy_advisory_datawriter_ &&
         nullptr != edge_gateway_status_datawriter_ &&
+        nullptr != service_heartbeat_datawriter_ &&
         nullptr != vehicle_edge_summary_datareader_ &&
         nullptr != charger_location_datareader_ &&
         nullptr != service_heartbeat_datareader_;
@@ -377,6 +396,7 @@ bool EdgeGatewayNode::enable_entities()
     enabled = enabled && (eprosima::fastdds::dds::RETCODE_OK == publisher_->enable());
     enabled = enabled && (eprosima::fastdds::dds::RETCODE_OK == energy_advisory_datawriter_->enable());
     enabled = enabled && (eprosima::fastdds::dds::RETCODE_OK == edge_gateway_status_datawriter_->enable());
+    enabled = enabled && (eprosima::fastdds::dds::RETCODE_OK == service_heartbeat_datawriter_->enable());
     enabled = enabled && (eprosima::fastdds::dds::RETCODE_OK == subscriber_->enable());
     enabled = enabled && (eprosima::fastdds::dds::RETCODE_OK == vehicle_edge_summary_datareader_->enable());
     enabled = enabled && (eprosima::fastdds::dds::RETCODE_OK == charger_location_datareader_->enable());
@@ -446,7 +466,7 @@ void EdgeGatewayNode::on_server_heartbeat_received(
 
 void EdgeGatewayNode::publish_edge_gateway_status()
 {
-    constexpr uint64_t SERVER_HB_TIMEOUT_MS = 10000U;
+    constexpr uint64_t SERVER_HB_TIMEOUT_MS = 2000U;
     if (last_server_hb_ms_ > 0U &&
         (common::HeaderFactory::now_ms() - last_server_hb_ms_) > SERVER_HB_TIMEOUT_MS)
     {
@@ -472,6 +492,21 @@ void EdgeGatewayNode::publish_edge_gateway_status()
 
     std::cout << "[edge_gateway] Published EdgeGatewayStatus status="
               << (server_available_ ? "OK" : "DEGRADED") << std::endl;
+}
+
+void EdgeGatewayNode::publish_heartbeat()
+{
+    safe_edge::common::ServiceHeartbeat heartbeat;
+    heartbeat.header_st(header_factory_.make_header("service_heartbeat"));
+    heartbeat.service_name("edge_gateway");
+    heartbeat.status(safe_edge::common::HealthStatus::HEALTH_OK);
+    heartbeat.detail("running");
+
+    if (eprosima::fastdds::dds::RETCODE_OK !=
+            service_heartbeat_datawriter_->write(&heartbeat, eprosima::fastdds::dds::HANDLE_NIL))
+    {
+        std::cerr << "[edge_gateway] Failed to publish ServiceHeartbeat" << std::endl;
+    }
 }
 
 void EdgeGatewayNode::log_subscription_match(const char* topic_name, int32_t total_count) const

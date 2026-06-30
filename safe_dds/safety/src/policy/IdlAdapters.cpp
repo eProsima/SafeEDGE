@@ -32,6 +32,8 @@ PolicyModeValue from_idl_policy_mode(
             return PolicyModeValue::edge_autonomous;
         case safe_edge::common::PolicyMode::POLICY_DEGRADED_SERVER_DOWN:
             return PolicyModeValue::degraded_server_down;
+        case safe_edge::common::PolicyMode::POLICY_DEGRADED_EDGE_DOWN:
+            return PolicyModeValue::degraded_edge_down;
         case safe_edge::common::PolicyMode::POLICY_DEGRADED_COMPLETE:
             return PolicyModeValue::degraded_complete;
         case safe_edge::common::PolicyMode::POLICY_UNKNOWN:
@@ -53,6 +55,8 @@ safe_edge::common::PolicyMode to_idl_policy_mode(
             return safe_edge::common::PolicyMode::POLICY_EDGE_AUTONOMOUS;
         case PolicyModeValue::degraded_server_down:
             return safe_edge::common::PolicyMode::POLICY_DEGRADED_SERVER_DOWN;
+        case PolicyModeValue::degraded_edge_down:
+            return safe_edge::common::PolicyMode::POLICY_DEGRADED_EDGE_DOWN;
         case PolicyModeValue::degraded_complete:
             return safe_edge::common::PolicyMode::POLICY_DEGRADED_COMPLETE;
         case PolicyModeValue::unknown:

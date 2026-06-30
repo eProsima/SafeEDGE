@@ -87,6 +87,7 @@ private:
     bool create_executor();
 
     void publish_frame();
+    void publish_heartbeat();
     void republish_last_frame() noexcept;
     void on_policy_decision_received(
             const safe_edge::internal::PolicyDecision& decision,
@@ -99,9 +100,10 @@ private:
     ParticipantListener participant_listener_;
     PolicyDecisionListener policy_decision_listener_;
 
-    eprosima::safedds::memory::container::StaticList<eprosima::safedds::transport::Locator, 2U> initial_peers_;
+    eprosima::safedds::memory::container::StaticList<eprosima::safedds::transport::Locator, 8U> initial_peers_;
 
     safe_edge::internal::SafetyInputFrameTypeSupport safety_input_frame_type_support_;
+    safe_edge::common::ServiceHeartbeatTypeSupport   service_heartbeat_type_support_;
     eprosima::safedds::dds::DomainParticipant* participant_ = nullptr;
     eprosima::safedds::dds::Publisher* publisher_ = nullptr;
     eprosima::safedds::execution::ISpinnable* executor_ = nullptr;
@@ -112,7 +114,14 @@ private:
     eprosima::safedds::dds::TypedDataWriter<safe_edge::internal::SafetyInputFrameTypeSupport>*
         safety_input_frame_writer_ = nullptr;
 
+    eprosima::safedds::dds::Topic* service_heartbeat_topic_ = nullptr;
+    eprosima::safedds::memory::container::StaticString256 service_heartbeat_topic_name_;
+    eprosima::safedds::dds::DataWriter* service_heartbeat_datawriter_ = nullptr;
+    eprosima::safedds::dds::TypedDataWriter<safe_edge::common::ServiceHeartbeatTypeSupport>*
+        service_heartbeat_writer_ = nullptr;
+
     eprosima::safedds::execution::Timer publish_timer_;
+    eprosima::safedds::execution::Timer heartbeat_timer_;
 
     safe_edge::internal::SafetyInputFrame last_frame_{};
     bool have_last_frame_ = false;

@@ -24,6 +24,11 @@ PolicyOutputs PolicyEngine::evaluate(
         outputs.mode = PolicyModeValue::degraded_server_down;
         outputs.reason = "server_down_edge_available";
     }
+    else if (!inputs.edge_available)
+    {
+        outputs.mode = PolicyModeValue::degraded_edge_down;
+        outputs.reason = "edge_unavailable";
+    }
     else if (inputs.soc_pct < 20.0F)
     {
         outputs.mode = PolicyModeValue::low_soc;

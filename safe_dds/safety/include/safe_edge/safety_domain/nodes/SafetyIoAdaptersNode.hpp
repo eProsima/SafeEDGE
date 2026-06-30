@@ -165,7 +165,7 @@ private:
     safe_edge::internal::PolicyDecisionTypeSupport policy_decision_type_support_;
     safe_edge::common::ServiceHeartbeatTypeSupport service_heartbeat_type_support_;
 
-    eprosima::safedds::memory::container::StaticList<eprosima::safedds::transport::Locator, 1U> initial_peers_;
+    eprosima::safedds::memory::container::StaticList<eprosima::safedds::transport::Locator, 8U> initial_peers_;
 
     eprosima::safedds::dds::DomainParticipant* participant_ = nullptr;
     eprosima::safedds::dds::Publisher* publisher_ = nullptr;

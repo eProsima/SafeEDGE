@@ -119,7 +119,7 @@ ServerNode::ServerNode(
     , pilot_client_(runtime_config.pilot_server_base_url, "/etc/safe-edge/server.ini")
     , participant_listener_(*this)
     , server_query_listener_(*this)
-    , next_heartbeat_fire_(std::chrono::steady_clock::now() + std::chrono::seconds(5))
+    , next_heartbeat_fire_(std::chrono::steady_clock::now() + std::chrono::milliseconds(100))
     , next_refresh_fire_(std::chrono::steady_clock::now() + std::chrono::seconds(30))
     , next_uptime_fire_(std::chrono::steady_clock::now() + std::chrono::seconds(300))
     , start_time_(std::chrono::steady_clock::now())
@@ -151,7 +151,7 @@ int ServerNode::run()
         if (now >= next_heartbeat_fire_)
         {
             publish_heartbeat();
-            next_heartbeat_fire_ += std::chrono::seconds(5);
+            next_heartbeat_fire_ += std::chrono::milliseconds(100);
         }
         if (now >= next_refresh_fire_)
         {

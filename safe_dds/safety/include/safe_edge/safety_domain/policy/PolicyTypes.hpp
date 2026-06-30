@@ -14,6 +14,7 @@ enum class PolicyModeValue
     low_soc,
     edge_autonomous,
     degraded_server_down,
+    degraded_edge_down,
     degraded_complete
 };
 

@@ -15,6 +15,10 @@
 #include <safedds/execution/TimePoint.hpp>
 #include <safedds/transport.hpp>
 
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 #include <iostream>
 
 namespace safe_edge {
@@ -23,10 +27,31 @@ namespace nodes {
 
 namespace {
 
-constexpr eprosima::safedds::execution::TimePeriod TIMEOUT = {5, 0};
+constexpr eprosima::safedds::execution::TimePeriod HEARTBEAT_PERIOD    = {0, 100'000'000};
+constexpr eprosima::safedds::execution::TimePeriod STATUS_WRITE_PERIOD = {0, 250'000'000};
+constexpr uint64_t LIVENESS_THRESHOLD_MS = 2000U;
+constexpr uint64_t SERVER_STATUS_TIMEOUT_MS = 2000U;
+constexpr size_t MAX_LIVENESS_ENTRIES = 16U;
 
-const char* health_status_to_text(
-        safe_edge::common::HealthStatus status) noexcept
+const char* DEFAULT_STATUS_FILE = "/tmp/safe-edge-status.json";
+
+uint64_t monotonic_ms() noexcept
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<uint64_t>(ts.tv_sec) * 1000ULL +
+           static_cast<uint64_t>(ts.tv_nsec) / 1000000ULL;
+}
+
+uint64_t realtime_ms() noexcept
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return static_cast<uint64_t>(ts.tv_sec) * 1000ULL +
+           static_cast<uint64_t>(ts.tv_nsec) / 1000000ULL;
+}
+
+const char* health_status_to_text(safe_edge::common::HealthStatus status) noexcept
 {
     switch (status)
     {
@@ -36,10 +61,8 @@ const char* health_status_to_text(
             return "HEALTH_DEGRADED";
         case safe_edge::common::HealthStatus::HEALTH_ERROR:
             return "HEALTH_ERROR";
-        case safe_edge::common::HealthStatus::HEALTH_UNKNOWN:
-            return "HEALTH_UNKNOWN";
         default:
-            return "UNKNOWN";
+            return "HEALTH_UNKNOWN";
     }
 }
 
@@ -258,8 +281,61 @@ void InfotainmentNode::RouteContextQueryListener::on_data_available(
     }
 }
 
-InfotainmentNode::InfotainmentNode(
-        const common::RuntimeConfig& runtime_config)
+InfotainmentNode::PolicyDecisionListener::PolicyDecisionListener(
+        InfotainmentNode& owner)
+    : owner_(owner)
+{
+}
+
+void InfotainmentNode::PolicyDecisionListener::on_data_available(
+        eprosima::safedds::dds::DataReader& reader) noexcept
+{
+    auto* typed_reader =
+        eprosima::safedds::dds::TypedDataReader<safe_edge::internal::PolicyDecisionTypeSupport>::downcast(reader);
+    if (nullptr == typed_reader)
+    {
+        std::cerr << "[infotainment] Failed to downcast policy_decision reader" << std::endl;
+        return;
+    }
+    safe_edge::internal::PolicyDecision sample{};
+    eprosima::safedds::dds::SampleInfo info{};
+    while (typed_reader->take_next_sample(sample, info) == eprosima::safedds::dds::ReturnCode::OK)
+    {
+        if (info.valid_data)
+        {
+            owner_.on_policy_decision_received(sample);
+        }
+    }
+}
+
+InfotainmentNode::ServerAvailabilityListener::ServerAvailabilityListener(
+        InfotainmentNode& owner)
+    : owner_(owner)
+{
+}
+
+void InfotainmentNode::ServerAvailabilityListener::on_data_available(
+        eprosima::safedds::dds::DataReader& reader) noexcept
+{
+    auto* typed_reader =
+        eprosima::safedds::dds::TypedDataReader<safe_edge::internal::ServerAvailabilityStatusTypeSupport>::downcast(reader);
+    if (nullptr == typed_reader)
+    {
+        std::cerr << "[infotainment] Failed to downcast server_availability_status reader" << std::endl;
+        return;
+    }
+    safe_edge::internal::ServerAvailabilityStatus sample{};
+    eprosima::safedds::dds::SampleInfo info{};
+    while (typed_reader->take_next_sample(sample, info) == eprosima::safedds::dds::ReturnCode::OK)
+    {
+        if (info.valid_data)
+        {
+            owner_.on_server_availability_received(sample);
+        }
+    }
+}
+
+InfotainmentNode::InfotainmentNode(const common::RuntimeConfig& runtime_config)
     : runtime_config_(runtime_config)
     , header_factory_(runtime_config.source_name)
     , participant_listener_(*this)
@@ -268,8 +344,16 @@ InfotainmentNode::InfotainmentNode(
     , transit_metrics_listener_(*this)
     , heartbeat_listener_(*this)
     , route_context_query_listener_(*this)
-    , heartbeat_timer_(TIMEOUT)
+    , policy_decision_listener_(*this)
+    , server_availability_listener_(*this)
+    , heartbeat_timer_(HEARTBEAT_PERIOD)
+    , status_write_timer_(STATUS_WRITE_PERIOD)
+    , liveness_count_(0U)
 {
+    const char* env_path = std::getenv("SAFE_EDGE_STATUS_FILE");
+    const char* path = (nullptr != env_path && '\0' != env_path[0]) ? env_path : DEFAULT_STATUS_FILE;
+    std::strncpy(status_file_path_, path, sizeof(status_file_path_) - 1U);
+    status_file_path_[sizeof(status_file_path_) - 1U] = '\0';
 }
 
 int InfotainmentNode::run()
@@ -280,7 +364,9 @@ int InfotainmentNode::run()
     }
 
     start_timers();
-    std::cout << "[infotainment] [START] Running with participant port " << runtime_config_.participant_port << std::endl;
+    std::cout << "[infotainment] [START] Running with participant port "
+              << runtime_config_.participant_port << std::endl;
+    std::cout << "[infotainment] Status file: " << status_file_path_ << std::endl;
 
     while (true)
     {
@@ -292,6 +378,11 @@ int InfotainmentNode::run()
         if (heartbeat_timer_.is_triggered_and_reset())
         {
             publish_heartbeat();
+        }
+
+        if (status_write_timer_.is_triggered_and_reset())
+        {
+            write_status_file();
         }
 
         executor_->spin(next_wakeup_time());
@@ -363,7 +454,9 @@ bool InfotainmentNode::register_types()
            register_type(*participant_, transit_metrics_type_support_, "TransitMetrics") &&
            register_type(*participant_, service_heartbeat_type_support_, "ServiceHeartbeat") &&
            register_type(*participant_, route_context_query_type_support_, "RouteContextQuery") &&
-           register_type(*participant_, route_context_response_type_support_, "RouteContextResponse");
+           register_type(*participant_, route_context_response_type_support_, "RouteContextResponse") &&
+           register_type(*participant_, policy_decision_type_support_, "PolicyDecision") &&
+           register_type(*participant_, server_availability_status_type_support_, "ServerAvailabilityStatus");
 }
 
 bool InfotainmentNode::create_topics()
@@ -391,6 +484,14 @@ bool InfotainmentNode::create_topics()
     route_context_response_topic_name_ = eprosima::safedds::memory::container::StaticString256(common::topic_names::route_context_response());
     route_context_response_topic_ = create_topic(*participant_, route_context_response_topic_name_, route_context_response_type_support_);
     if (nullptr == route_context_response_topic_) { std::cerr << "[infotainment] Failed to create topic: route_context_response" << std::endl; return false; }
+
+    policy_decision_topic_name_ = eprosima::safedds::memory::container::StaticString256(common::topic_names::policy_decision());
+    policy_decision_topic_ = create_topic(*participant_, policy_decision_topic_name_, policy_decision_type_support_);
+    if (nullptr == policy_decision_topic_) { std::cerr << "[infotainment] Failed to create topic: policy_decision" << std::endl; return false; }
+
+    server_availability_status_topic_name_ = eprosima::safedds::memory::container::StaticString256(common::topic_names::server_availability_status());
+    server_availability_status_topic_ = create_topic(*participant_, server_availability_status_topic_name_, server_availability_status_type_support_);
+    if (nullptr == server_availability_status_topic_) { std::cerr << "[infotainment] Failed to create topic: server_availability_status" << std::endl; return false; }
 
     return true;
 }
@@ -445,12 +546,16 @@ bool InfotainmentNode::create_endpoints()
     transit_metrics_datareader_ = subscriber_->create_datareader(*transit_metrics_topic_, reader_qos, &transit_metrics_listener_, eprosima::safedds::dds::DATA_AVAILABLE_STATUS);
     heartbeat_datareader_ = subscriber_->create_datareader(*service_heartbeat_topic_, reader_qos, &heartbeat_listener_, eprosima::safedds::dds::DATA_AVAILABLE_STATUS);
     route_context_query_datareader_ = subscriber_->create_datareader(*route_context_query_topic_, reader_qos, &route_context_query_listener_, eprosima::safedds::dds::DATA_AVAILABLE_STATUS);
+    policy_decision_datareader_ = subscriber_->create_datareader(*policy_decision_topic_, reader_qos, &policy_decision_listener_, eprosima::safedds::dds::DATA_AVAILABLE_STATUS);
+    server_availability_status_datareader_ = subscriber_->create_datareader(*server_availability_status_topic_, reader_qos, &server_availability_listener_, eprosima::safedds::dds::DATA_AVAILABLE_STATUS);
 
     transit_health_reader_ = downcast_reader<safe_edge::pilot_server::TransitHealthTypeSupport>(transit_health_datareader_);
     route_metrics_reader_ = downcast_reader<safe_edge::pilot_server::RouteMetricTypeSupport>(route_metrics_datareader_);
     transit_metrics_reader_ = downcast_reader<safe_edge::pilot_server::TransitMetricsTypeSupport>(transit_metrics_datareader_);
     heartbeat_reader_ = downcast_reader<safe_edge::common::ServiceHeartbeatTypeSupport>(heartbeat_datareader_);
     route_context_query_reader_ = downcast_reader<safe_edge::internal::RouteContextQueryTypeSupport>(route_context_query_datareader_);
+    policy_decision_reader_ = downcast_reader<safe_edge::internal::PolicyDecisionTypeSupport>(policy_decision_datareader_);
+    server_availability_status_reader_ = downcast_reader<safe_edge::internal::ServerAvailabilityStatusTypeSupport>(server_availability_status_datareader_);
 
     const bool success = nullptr != service_heartbeat_writer_ &&
             nullptr != route_context_response_writer_ &&
@@ -458,15 +563,16 @@ bool InfotainmentNode::create_endpoints()
             nullptr != route_metrics_reader_ &&
             nullptr != transit_metrics_reader_ &&
             nullptr != heartbeat_reader_ &&
-            nullptr != route_context_query_reader_;
+            nullptr != route_context_query_reader_ &&
+            nullptr != policy_decision_reader_ &&
+            nullptr != server_availability_status_reader_;
 
     if (!success)
     {
         std::cerr << "[infotainment] Failed to create endpoints" << std::endl;
-        return false;
     }
 
-    return true;
+    return success;
 }
 
 bool InfotainmentNode::enable_entities()
@@ -474,13 +580,15 @@ bool InfotainmentNode::enable_entities()
     bool enabled = true;
     enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == publisher_->enable());
     enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == service_heartbeat_datawriter_->enable());
+    enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == route_context_response_datawriter_->enable());
     enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == subscriber_->enable());
     enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == transit_health_datareader_->enable());
     enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == route_metrics_datareader_->enable());
     enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == transit_metrics_datareader_->enable());
     enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == heartbeat_datareader_->enable());
-    enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == route_context_response_datawriter_->enable());
     enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == route_context_query_datareader_->enable());
+    enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == policy_decision_datareader_->enable());
+    enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == server_availability_status_datareader_->enable());
     enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == participant_->enable());
 
     if (!enabled)
@@ -507,6 +615,7 @@ bool InfotainmentNode::create_executor()
 void InfotainmentNode::start_timers() noexcept
 {
     heartbeat_timer_.start();
+    status_write_timer_.start();
 }
 
 void InfotainmentNode::on_transit_health_received(
@@ -544,6 +653,198 @@ void InfotainmentNode::on_route_context_query_received(
     std::cout << "[infotainment] Received RouteContextQuery vehicle_health="
               << static_cast<int32_t>(query.vehicle_health) << std::endl;
     publish_route_context_response(query);
+}
+
+void InfotainmentNode::on_policy_decision_received(
+        const safe_edge::internal::PolicyDecision& decision)
+{
+    cached_policy_mode_ = decision.mode;
+    std::strncpy(cached_policy_reason_, decision.reason.c_str(), sizeof(cached_policy_reason_) - 1U);
+    cached_policy_reason_[sizeof(cached_policy_reason_) - 1U] = '\0';
+    cached_allow_non_safety_ = decision.allow_non_safety;
+    have_policy_ = true;
+    std::cout << "[infotainment] PolicyDecision mode=" << policy_mode_to_str(decision.mode)
+              << " reason=" << decision.reason << std::endl;
+}
+
+void InfotainmentNode::on_server_availability_received(
+        const safe_edge::internal::ServerAvailabilityStatus& status)
+{
+    cached_server_available_ = status.server_available;
+    std::strncpy(cached_server_detail_, status.detail.c_str(), sizeof(cached_server_detail_) - 1U);
+    cached_server_detail_[sizeof(cached_server_detail_) - 1U] = '\0';
+    have_server_status_ = true;
+    last_server_status_ms_ = monotonic_ms();
+    std::cout << "[infotainment] ServerAvailabilityStatus available=" << status.server_available
+              << " detail=" << status.detail << std::endl;
+}
+
+void InfotainmentNode::update_liveness(const char* service_name) noexcept
+{
+    const uint64_t now = monotonic_ms();
+    for (size_t i = 0U; i < liveness_count_; ++i)
+    {
+        if (std::strncmp(liveness_[i].name, service_name, sizeof(liveness_[i].name) - 1U) == 0)
+        {
+            liveness_[i].last_seen_ms = now;
+            return;
+        }
+    }
+    if (liveness_count_ < MAX_LIVENESS_ENTRIES)
+    {
+        std::strncpy(liveness_[liveness_count_].name, service_name, sizeof(liveness_[0].name) - 1U);
+        liveness_[liveness_count_].name[sizeof(liveness_[0].name) - 1U] = '\0';
+        liveness_[liveness_count_].last_seen_ms = now;
+        ++liveness_count_;
+    }
+}
+
+bool InfotainmentNode::is_alive(const char* service_name) const noexcept
+{
+    const uint64_t now = monotonic_ms();
+    for (size_t i = 0U; i < liveness_count_; ++i)
+    {
+        if (std::strncmp(liveness_[i].name, service_name, sizeof(liveness_[i].name) - 1U) == 0)
+        {
+            return (now - liveness_[i].last_seen_ms) < LIVENESS_THRESHOLD_MS;
+        }
+    }
+    return false;
+}
+
+void InfotainmentNode::on_peer_heartbeat_received(
+        const safe_edge::common::ServiceHeartbeat& heartbeat)
+{
+    if (heartbeat.service_name == runtime_config_.service_name)
+    {
+        return;
+    }
+    update_liveness(heartbeat.service_name.c_str());
+    std::cout << "[infotainment] Heartbeat service=" << heartbeat.service_name
+              << " status=" << health_status_to_text(heartbeat.status) << std::endl;
+}
+
+// ---------------------------------------------------------------------------
+// Status file write
+// ---------------------------------------------------------------------------
+
+const char* InfotainmentNode::policy_mode_to_str(safe_edge::common::PolicyMode mode) const noexcept
+{
+    switch (mode)
+    {
+        case safe_edge::common::PolicyMode::POLICY_NOMINAL:             return "POLICY_NOMINAL";
+        case safe_edge::common::PolicyMode::POLICY_LOW_SOC:             return "POLICY_LOW_SOC";
+        case safe_edge::common::PolicyMode::POLICY_EDGE_AUTONOMOUS:     return "POLICY_EDGE_AUTONOMOUS";
+        case safe_edge::common::PolicyMode::POLICY_DEGRADED_SERVER_DOWN: return "POLICY_DEGRADED_SERVER_DOWN";
+        case safe_edge::common::PolicyMode::POLICY_DEGRADED_EDGE_DOWN:  return "POLICY_DEGRADED_EDGE_DOWN";
+        case safe_edge::common::PolicyMode::POLICY_DEGRADED_COMPLETE:   return "POLICY_DEGRADED_COMPLETE";
+        default:                                                         return "POLICY_UNKNOWN";
+    }
+}
+
+void InfotainmentNode::write_status_file() noexcept
+{
+    const bool server_ok = have_server_status_ && cached_server_available_ &&
+                           (monotonic_ms() - last_server_status_ms_) < SERVER_STATUS_TIMEOUT_MS;
+    const bool safety_ok = is_alive("policy_engine");
+    const bool edge_ok   = is_alive("edge_gateway");
+
+    const bool nominal = (cached_policy_mode_ == safe_edge::common::PolicyMode::POLICY_NOMINAL)
+                      && server_ok && safety_ok;
+    const char* global_status = nominal ? "nominal" : "degraded";
+
+    char buf[4096];
+    int pos = 0;
+
+    // Escape helper lambda equivalent — inline, since no lambdas in no-exception C++14 with strict warnings
+    // We only emit ASCII strings from controlled sources, so no escaping needed
+
+    pos += std::snprintf(buf + pos, static_cast<size_t>(sizeof(buf) - pos),
+        "{\n"
+        "  \"timestamp_ms\": %llu,\n"
+        "  \"global_status\": \"%s\",\n"
+        "  \"policy\": {\n"
+        "    \"mode\": \"%s\",\n"
+        "    \"reason\": \"%s\",\n"
+        "    \"allow_non_safety\": %s\n"
+        "  },\n"
+        "  \"server\": {\n"
+        "    \"available\": %s,\n"
+        "    \"detail\": \"%s\"\n"
+        "  },\n",
+        static_cast<unsigned long long>(realtime_ms()),
+        global_status,
+        policy_mode_to_str(cached_policy_mode_),
+        cached_policy_reason_,
+        cached_allow_non_safety_ ? "true" : "false",
+        server_ok ? "true" : "false",
+        have_server_status_ ? cached_server_detail_ : "unknown"
+    );
+
+    // Nodes
+    struct NodeEntry { const char* name; bool self; };
+    const NodeEntry nodes[] = {
+        { "vehicle_mock",       false },
+        { "policy_engine",      false },
+        { "safety_io_adapters", false },
+        { "cloud_gateway",      false },
+        { "ota_service",        false },
+        { "infotainment",       true  }
+    };
+    const size_t node_count = sizeof(nodes) / sizeof(nodes[0]);
+
+    pos += std::snprintf(buf + pos, static_cast<size_t>(sizeof(buf) - pos),
+        "  \"nodes\": [\n");
+    for (size_t i = 0U; i < node_count; ++i)
+    {
+        const bool alive = nodes[i].self ? true : is_alive(nodes[i].name);
+        const char* comma = (i + 1U < node_count) ? "," : "";
+        pos += std::snprintf(buf + pos, static_cast<size_t>(sizeof(buf) - pos),
+            "    { \"name\": \"%s\", \"alive\": %s }%s\n",
+            nodes[i].name, alive ? "true" : "false", comma);
+    }
+    pos += std::snprintf(buf + pos, static_cast<size_t>(sizeof(buf) - pos),
+        "  ],\n");
+
+    // Communications
+    pos += std::snprintf(buf + pos, static_cast<size_t>(sizeof(buf) - pos),
+        "  \"communications\": [\n"
+        "    { \"name\": \"server_link\",  \"ok\": %s, \"detail\": \"%s\" },\n"
+        "    { \"name\": \"edge_link\",    \"ok\": %s, \"detail\": \"%s\" },\n"
+        "    { \"name\": \"safety_link\",  \"ok\": %s, \"detail\": \"%s\" }\n"
+        "  ]\n"
+        "}\n",
+        server_ok ? "true" : "false",
+        have_server_status_ ? cached_server_detail_ : "not observed",
+        edge_ok ? "true" : "false",
+        edge_ok ? "edge_gateway alive" : "no heartbeat from edge_gateway",
+        safety_ok ? "true" : "false",
+        safety_ok ? "policy_engine alive" : "no heartbeat from policy_engine"
+    );
+
+    if (pos <= 0 || pos >= static_cast<int>(sizeof(buf)))
+    {
+        std::cerr << "[infotainment] Status buffer overflow" << std::endl;
+        return;
+    }
+
+    // Atomic write: tmp → rename
+    char tmp_path[520];
+    std::snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", status_file_path_);
+
+    std::FILE* f = std::fopen(tmp_path, "w");
+    if (nullptr == f)
+    {
+        std::cerr << "[infotainment] Cannot open status tmp file: " << tmp_path << std::endl;
+        return;
+    }
+    std::fwrite(buf, 1U, static_cast<size_t>(pos), f);
+    std::fclose(f);
+
+    if (std::rename(tmp_path, status_file_path_) != 0)
+    {
+        std::cerr << "[infotainment] Failed to rename status file" << std::endl;
+    }
 }
 
 void InfotainmentNode::publish_route_context_response(
@@ -596,20 +897,6 @@ void InfotainmentNode::publish_heartbeat()
     std::cout << "[infotainment] Published ServiceHeartbeat" << std::endl;
 }
 
-void InfotainmentNode::on_peer_heartbeat_received(
-        const safe_edge::common::ServiceHeartbeat& heartbeat)
-{
-    if (heartbeat.service_name == runtime_config_.service_name)
-    {
-        return;
-    }
-
-    std::cout << "[infotainment] Received ServiceHeartbeat service="
-              << heartbeat.service_name
-              << " status=" << health_status_to_text(heartbeat.status)
-              << " detail=" << heartbeat.detail << std::endl;
-}
-
 void InfotainmentNode::log_subscription_match(
         const char* topic_name,
         int32_t total_count) const
@@ -630,6 +917,7 @@ eprosima::safedds::execution::TimePoint InfotainmentNode::next_wakeup_time() con
 {
     eprosima::safedds::execution::TimePoint next = executor_->get_next_work_timepoint();
     next = eprosima::safedds::execution::TimePoint::min(next, heartbeat_timer_.next_trigger());
+    next = eprosima::safedds::execution::TimePoint::min(next, status_write_timer_.next_trigger());
     return next;
 }
 

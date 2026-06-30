@@ -19,6 +19,7 @@ const char* route_context_query() noexcept;
 const char* route_context_response() noexcept;
 const char* server_query() noexcept;
 const char* server_availability_status() noexcept;
+const char* policy_decision() noexcept;
 
 } // namespace topic_names
 } // namespace common

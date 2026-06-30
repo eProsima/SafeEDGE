@@ -70,6 +70,11 @@ const char* server_availability_status() noexcept
     return "safe_edge.internal.server_availability_status";
 }
 
+const char* policy_decision() noexcept
+{
+    return "safe_edge.internal.policy_decision";
+}
+
 } // namespace topic_names
 } // namespace common
 } // namespace non_safety_domain

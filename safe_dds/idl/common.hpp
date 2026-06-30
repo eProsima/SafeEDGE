@@ -1219,6 +1219,7 @@ namespace safe_edge {
             POLICY_LOW_SOC ,
             POLICY_EDGE_AUTONOMOUS ,
             POLICY_DEGRADED_SERVER_DOWN ,
+            POLICY_DEGRADED_EDGE_DOWN ,
             POLICY_DEGRADED_COMPLETE 
         };
 

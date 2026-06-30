@@ -30,7 +30,8 @@ namespace nodes {
 
 namespace {
 
-constexpr eprosima::safedds::execution::TimePeriod TIMEOUT = {0, 250'000'000};
+constexpr eprosima::safedds::execution::TimePeriod TIMEOUT          = {0, 250'000'000};
+constexpr eprosima::safedds::execution::TimePeriod HEARTBEAT_PERIOD = {0, 100'000'000};
 
 static constexpr const char* INPUT_FILE_PATH = "/data/safe-edge-stage2/input.txt";
 
@@ -168,6 +169,7 @@ VehicleMockNode::VehicleMockNode(
     , participant_listener_(*this)
     , policy_decision_listener_(*this)
     , publish_timer_(TIMEOUT)
+    , heartbeat_timer_(HEARTBEAT_PERIOD)
 {
 }
 
@@ -179,6 +181,7 @@ int VehicleMockNode::run()
     }
 
     publish_timer_.start();
+    heartbeat_timer_.start();
     std::cout << "[vehicle_mock] [START] Running with participant port " << runtime_config_.participant_port << std::endl;
 
     while (true)
@@ -193,7 +196,14 @@ int VehicleMockNode::run()
             publish_frame();
         }
 
-        eprosima::safedds::execution::TimePoint next_work_timepoint = eprosima::safedds::execution::TimePoint::min(executor_->get_next_work_timepoint(), publish_timer_.next_trigger());
+        if (heartbeat_timer_.is_triggered_and_reset())
+        {
+            publish_heartbeat();
+        }
+
+        eprosima::safedds::execution::TimePoint next_work_timepoint = eprosima::safedds::execution::TimePoint::min(
+            eprosima::safedds::execution::TimePoint::min(executor_->get_next_work_timepoint(), publish_timer_.next_trigger()),
+            heartbeat_timer_.next_trigger());
 
         executor_->spin(next_work_timepoint);
     }
@@ -262,6 +272,15 @@ bool VehicleMockNode::register_types()
         std::cerr << "[vehicle_mock] Failed to register type: PolicyDecision" << std::endl;
         return false;
     }
+
+    if (eprosima::safedds::dds::ReturnCode::OK !=
+            service_heartbeat_type_support_.register_type(
+                *participant_, service_heartbeat_type_support_.get_type_name()))
+    {
+        std::cerr << "[vehicle_mock] Failed to register type: ServiceHeartbeat" << std::endl;
+        return false;
+    }
+
     return true;
 }
 
@@ -297,6 +316,22 @@ bool VehicleMockNode::create_topics()
     if (nullptr == policy_decision_topic_)
     {
         std::cerr << "[vehicle_mock] Failed to create topic: policy_decision" << std::endl;
+        return false;
+    }
+
+    service_heartbeat_topic_name_ = eprosima::safedds::memory::container::StaticString256(
+        common::topic_names::service_heartbeat());
+
+    service_heartbeat_topic_ = participant_->create_topic(
+        service_heartbeat_topic_name_,
+        service_heartbeat_type_support_.get_type_name(),
+        topic_qos,
+        nullptr,
+        eprosima::safedds::dds::NONE_STATUS_MASK);
+
+    if (nullptr == service_heartbeat_topic_)
+    {
+        std::cerr << "[vehicle_mock] Failed to create topic: service_heartbeat" << std::endl;
         return false;
     }
 
@@ -338,6 +373,30 @@ bool VehicleMockNode::create_endpoints()
     if (nullptr == safety_input_frame_writer_)
     {
         std::cerr << "[vehicle_mock] Failed to downcast safety_input_frame writer" << std::endl;
+        return false;
+    }
+
+    eprosima::safedds::dds::DataWriterQos hb_writer_qos{};
+    hb_writer_qos.reliability().kind = eprosima::safedds::dds::ReliabilityQosPolicyKind::RELIABLE_RELIABILITY_QOS;
+
+    service_heartbeat_datawriter_ = publisher_->create_datawriter(
+        *service_heartbeat_topic_,
+        hb_writer_qos,
+        nullptr,
+        eprosima::safedds::dds::NONE_STATUS_MASK);
+
+    if (nullptr == service_heartbeat_datawriter_)
+    {
+        std::cerr << "[vehicle_mock] Failed to create service_heartbeat datawriter" << std::endl;
+        return false;
+    }
+
+    service_heartbeat_writer_ = eprosima::safedds::dds::TypedDataWriter<
+        safe_edge::common::ServiceHeartbeatTypeSupport>::downcast(*service_heartbeat_datawriter_);
+
+    if (nullptr == service_heartbeat_writer_)
+    {
+        std::cerr << "[vehicle_mock] Failed to downcast service_heartbeat writer" << std::endl;
         return false;
     }
 
@@ -389,6 +448,7 @@ bool VehicleMockNode::enable_entities()
     bool enabled = true;
     enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == publisher_->enable());
     enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == safety_input_frame_datawriter_->enable());
+    enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == service_heartbeat_datawriter_->enable());
     enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == subscriber_->enable());
     enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == policy_decision_reader_->enable());
     enabled = enabled && (eprosima::safedds::dds::ReturnCode::OK == participant_->enable());
@@ -452,6 +512,21 @@ void VehicleMockNode::publish_frame()
                   << " t_pub=" << t_pub.seconds << "." << t_pub.nanoseconds
                   << " soc=" << frame.battery.soc_pct
                   << " emergency_stop=" << frame.safety.emergency_stop << std::endl;
+    }
+}
+
+void VehicleMockNode::publish_heartbeat()
+{
+    safe_edge::common::ServiceHeartbeat heartbeat;
+    heartbeat.header_st = header_factory_.make_header("service_heartbeat");
+    heartbeat.service_name = runtime_config_.service_name;
+    heartbeat.status = safe_edge::common::HealthStatus::HEALTH_OK;
+    heartbeat.detail = "running";
+
+    if (eprosima::safedds::dds::ReturnCode::OK !=
+            service_heartbeat_writer_->write(heartbeat, eprosima::safedds::dds::HANDLE_NIL))
+    {
+        std::cerr << "[vehicle_mock] Failed to publish ServiceHeartbeat" << std::endl;
     }
 }
 

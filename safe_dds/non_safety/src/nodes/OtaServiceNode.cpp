@@ -23,7 +23,7 @@ namespace nodes {
 
 namespace {
 
-constexpr eprosima::safedds::execution::TimePeriod TIMEOUT = {5, 0};
+constexpr eprosima::safedds::execution::TimePeriod TIMEOUT = {0, 100'000'000};
 
 template<typename TypeSupportT>
 bool register_type(

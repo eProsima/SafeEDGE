@@ -25,7 +25,7 @@ namespace nodes {
 
 namespace {
 
-constexpr eprosima::safedds::execution::TimePeriod TIMEOUT = {5, 0}; 
+constexpr eprosima::safedds::execution::TimePeriod TIMEOUT = {0, 100'000'000};
 
 // Gateway health thresholds (ms since last advisory)
 constexpr uint64_t GATEWAY_OK_THRESHOLD_MS      = 5000U;
@@ -621,9 +621,16 @@ void SafetyIoAdaptersNode::publish_vehicle_edge_summary()
 void SafetyIoAdaptersNode::on_policy_decision_received(
         const safe_edge::internal::PolicyDecision& decision)
 {
+    const bool changed = !have_policy_decision_ ||
+                         decision.mode != latest_policy_decision_.mode ||
+                         decision.allow_non_safety != latest_policy_decision_.allow_non_safety ||
+                         decision.allow_ota != latest_policy_decision_.allow_ota;
     latest_policy_decision_ = decision;
     have_policy_decision_ = true;
-    pending_vehicle_edge_summary_publish_ = true;
+    if (changed)
+    {
+        pending_vehicle_edge_summary_publish_ = true;
+    }
 
     std::cout << "[safety_io_adapters] Received PolicyDecision mode=" << static_cast<int32_t>(decision.mode)
               << " allow_non_safety=" << decision.allow_non_safety

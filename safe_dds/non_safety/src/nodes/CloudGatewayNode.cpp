@@ -23,7 +23,7 @@ namespace nodes {
 
 namespace {
 
-constexpr eprosima::safedds::execution::TimePeriod TIMEOUT = {5, 0};
+constexpr eprosima::safedds::execution::TimePeriod TIMEOUT = {0, 100'000'000};
 
 template<typename TypeSupportT>
 bool register_type(
@@ -378,12 +378,10 @@ int CloudGatewayNode::run()
             if (last_server_hb_ms_ > 0U &&
                 (common::HeaderFactory::now_ms() - last_server_hb_ms_) > SERVER_HB_TIMEOUT_MS)
             {
-                if (server_available_)
-                {
-                    server_available_ = false;
-                    publish_server_availability_status(false, "server_lost");
-                }
+                server_available_ = false;
             }
+            publish_server_availability_status(
+                server_available_, server_available_ ? "running" : "unavailable");
         }
 
         executor_->spin(next_wakeup_time());
@@ -778,13 +776,8 @@ void CloudGatewayNode::on_peer_heartbeat_received(
 
     if (heartbeat.service_name == "server")
     {
-        const bool was_available = server_available_;
         last_server_hb_ms_ = common::HeaderFactory::now_ms();
         server_available_ = true;
-        if (!was_available)
-        {
-            publish_server_availability_status(true, "server_up");
-        }
         return;
     }
 

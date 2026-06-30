@@ -127,10 +127,27 @@ private:
         explicit RouteContextQueryListener(InfotainmentNode& owner);
 
         void on_data_available(
-                eprosima::safedds::dds::DataReader& reader) noexcept override;
+            eprosima::safedds::dds::DataReader& reader) noexcept override;
 
     private:
+        InfotainmentNode& owner_;
+    };
 
+    class PolicyDecisionListener : public eprosima::safedds::dds::DataReaderListener
+    {
+    public:
+        explicit PolicyDecisionListener(InfotainmentNode& owner);
+        void on_data_available(eprosima::safedds::dds::DataReader& reader) noexcept override;
+    private:
+        InfotainmentNode& owner_;
+    };
+
+    class ServerAvailabilityListener : public eprosima::safedds::dds::DataReaderListener
+    {
+    public:
+        explicit ServerAvailabilityListener(InfotainmentNode& owner);
+        void on_data_available(eprosima::safedds::dds::DataReader& reader) noexcept override;
+    private:
         InfotainmentNode& owner_;
     };
 
@@ -150,6 +167,12 @@ private:
     void on_peer_heartbeat_received(const safe_edge::common::ServiceHeartbeat& heartbeat);
     void on_route_context_query_received(const safe_edge::internal::RouteContextQuery& query);
     void publish_route_context_response(const safe_edge::internal::RouteContextQuery& query);
+    void on_policy_decision_received(const safe_edge::internal::PolicyDecision& decision);
+    void on_server_availability_received(const safe_edge::internal::ServerAvailabilityStatus& status);
+    void update_liveness(const char* service_name) noexcept;
+    bool is_alive(const char* service_name) const noexcept;
+    void write_status_file() noexcept;
+    const char* policy_mode_to_str(safe_edge::common::PolicyMode mode) const noexcept;
     void log_subscription_match(const char* topic_name, int32_t total_count) const;
     void log_publication_match(const char* topic_name, int32_t total_count) const;
     eprosima::safedds::execution::TimePoint next_wakeup_time() const noexcept;
@@ -164,6 +187,8 @@ private:
     TransitMetricsListener transit_metrics_listener_;
     HeartbeatListener heartbeat_listener_;
     RouteContextQueryListener route_context_query_listener_;
+    PolicyDecisionListener policy_decision_listener_;
+    ServerAvailabilityListener server_availability_listener_;
 
     safe_edge::pilot_server::TransitHealthTypeSupport transit_health_type_support_;
     safe_edge::pilot_server::RouteMetricTypeSupport route_metrics_type_support_;
@@ -171,9 +196,11 @@ private:
     safe_edge::common::ServiceHeartbeatTypeSupport service_heartbeat_type_support_;
     safe_edge::internal::RouteContextQueryTypeSupport route_context_query_type_support_;
     safe_edge::internal::RouteContextResponseTypeSupport route_context_response_type_support_;
+    safe_edge::internal::PolicyDecisionTypeSupport policy_decision_type_support_;
+    safe_edge::internal::ServerAvailabilityStatusTypeSupport server_availability_status_type_support_;
 
     eprosima::safedds::dds::DomainParticipant* participant_ = nullptr;
-    eprosima::safedds::memory::container::StaticList<eprosima::safedds::transport::Locator, 4U> initial_peers_;
+    eprosima::safedds::memory::container::StaticList<eprosima::safedds::transport::Locator, 8U> initial_peers_;
     eprosima::safedds::dds::Publisher* publisher_ = nullptr;
     eprosima::safedds::dds::Subscriber* subscriber_ = nullptr;
     eprosima::safedds::execution::ISpinnable* executor_ = nullptr;
@@ -184,6 +211,8 @@ private:
     eprosima::safedds::dds::Topic* service_heartbeat_topic_ = nullptr;
     eprosima::safedds::dds::Topic* route_context_query_topic_ = nullptr;
     eprosima::safedds::dds::Topic* route_context_response_topic_ = nullptr;
+    eprosima::safedds::dds::Topic* policy_decision_topic_ = nullptr;
+    eprosima::safedds::dds::Topic* server_availability_status_topic_ = nullptr;
 
     eprosima::safedds::memory::container::StaticString256 transit_health_topic_name_;
     eprosima::safedds::memory::container::StaticString256 route_metrics_topic_name_;
@@ -191,11 +220,12 @@ private:
     eprosima::safedds::memory::container::StaticString256 service_heartbeat_topic_name_;
     eprosima::safedds::memory::container::StaticString256 route_context_query_topic_name_;
     eprosima::safedds::memory::container::StaticString256 route_context_response_topic_name_;
+    eprosima::safedds::memory::container::StaticString256 policy_decision_topic_name_;
+    eprosima::safedds::memory::container::StaticString256 server_availability_status_topic_name_;
 
     eprosima::safedds::dds::DataWriter* service_heartbeat_datawriter_ = nullptr;
     eprosima::safedds::dds::TypedDataWriter<safe_edge::common::ServiceHeartbeatTypeSupport>* service_heartbeat_writer_ =
             nullptr;
-
     eprosima::safedds::dds::DataWriter* route_context_response_datawriter_ = nullptr;
     eprosima::safedds::dds::TypedDataWriter<safe_edge::internal::RouteContextResponseTypeSupport>* route_context_response_writer_ =
             nullptr;
@@ -205,6 +235,8 @@ private:
     eprosima::safedds::dds::DataReader* transit_metrics_datareader_ = nullptr;
     eprosima::safedds::dds::DataReader* heartbeat_datareader_ = nullptr;
     eprosima::safedds::dds::DataReader* route_context_query_datareader_ = nullptr;
+    eprosima::safedds::dds::DataReader* policy_decision_datareader_ = nullptr;
+    eprosima::safedds::dds::DataReader* server_availability_status_datareader_ = nullptr;
 
     eprosima::safedds::dds::TypedDataReader<safe_edge::pilot_server::TransitHealthTypeSupport>* transit_health_reader_ =
             nullptr;
@@ -216,9 +248,15 @@ private:
             nullptr;
     eprosima::safedds::dds::TypedDataReader<safe_edge::internal::RouteContextQueryTypeSupport>* route_context_query_reader_ =
             nullptr;
+    eprosima::safedds::dds::TypedDataReader<safe_edge::internal::PolicyDecisionTypeSupport>* policy_decision_reader_ =
+            nullptr;
+    eprosima::safedds::dds::TypedDataReader<safe_edge::internal::ServerAvailabilityStatusTypeSupport>* server_availability_status_reader_ =
+            nullptr;
 
     eprosima::safedds::execution::Timer heartbeat_timer_;
+    eprosima::safedds::execution::Timer status_write_timer_;
 
+    // Cached transit/route state (existing)
     safe_edge::pilot_server::TransitHealth cached_transit_health_{};
     bool have_transit_health_ = false;
 
@@ -227,6 +265,26 @@ private:
 
     int32_t cached_vehicles_seen_ = 0;
     bool have_transit_metrics_ = false;
+
+    safe_edge::common::PolicyMode cached_policy_mode_ = safe_edge::common::PolicyMode::POLICY_UNKNOWN;
+    char cached_policy_reason_[256] = {};
+    bool cached_allow_non_safety_ = false;
+    bool have_policy_ = false;
+
+    bool cached_server_available_ = false;
+    char cached_server_detail_[256] = {};
+    bool have_server_status_ = false;
+    uint64_t last_server_status_ms_ = 0U;
+
+    struct LivenessEntry
+    {
+        char name[64];
+        uint64_t last_seen_ms;
+    };
+    LivenessEntry liveness_[16];
+    size_t liveness_count_ = 0;
+
+    char status_file_path_[512] = {};
 };
 
 } // namespace nodes

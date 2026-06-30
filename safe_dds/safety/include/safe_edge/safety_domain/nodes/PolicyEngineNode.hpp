@@ -221,7 +221,7 @@ private:
     safe_edge::internal::ChargingResponseTypeSupport charging_response_type_support_;
     safe_edge::internal::ServerAvailabilityStatusTypeSupport server_availability_status_type_support_;
 
-    eprosima::safedds::memory::container::StaticList<eprosima::safedds::transport::Locator, 1U> initial_peers_;
+    eprosima::safedds::memory::container::StaticList<eprosima::safedds::transport::Locator, 8U> initial_peers_;
 
     eprosima::safedds::dds::DomainParticipant* participant_ = nullptr;
     eprosima::safedds::dds::Publisher* publisher_ = nullptr;

@@ -112,6 +112,7 @@ private:
     void on_server_heartbeat_received(const safe_edge::common::ServiceHeartbeat& heartbeat);
     void publish_energy_advisory(const safe_edge::edge::EnergyAdvisory& advisory);
     void publish_edge_gateway_status();
+    void publish_heartbeat();
 
     void log_subscription_match(const char* topic_name, int32_t total_count) const;
     void log_publication_match(const char* topic_name, int32_t total_count) const;
@@ -148,6 +149,7 @@ private:
 
     eprosima::fastdds::dds::DataWriter* energy_advisory_datawriter_ = nullptr;
     eprosima::fastdds::dds::DataWriter* edge_gateway_status_datawriter_ = nullptr;
+    eprosima::fastdds::dds::DataWriter* service_heartbeat_datawriter_ = nullptr;
 
     eprosima::fastdds::dds::DataReader* vehicle_edge_summary_datareader_ = nullptr;
     eprosima::fastdds::dds::DataReader* charger_location_datareader_ = nullptr;

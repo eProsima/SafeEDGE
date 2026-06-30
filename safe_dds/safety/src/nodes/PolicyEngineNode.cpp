@@ -25,8 +25,8 @@ namespace nodes {
 
 namespace {
 
-constexpr eprosima::safedds::execution::TimePeriod TIMEOUT = {5, 0};
-constexpr uint64_t EDGE_STATUS_TIMEOUT_MS = 10000U;
+constexpr eprosima::safedds::execution::TimePeriod TIMEOUT = {0, 100'000'000};
+constexpr uint64_t EDGE_STATUS_TIMEOUT_MS = 250U;
 
 template<typename TypeSupportT>
 bool register_type(
@@ -817,11 +817,16 @@ void PolicyEngineNode::on_edge_charger_response_received(
 void PolicyEngineNode::on_energy_advisory_received(
         const safe_edge::edge::EnergyAdvisory& advisory)
 {
+    const bool changed = !have_energy_advisory_ ||
+                         advisory.suggested_mode != latest_energy_advisory_.suggested_mode;
     latest_energy_advisory_ = advisory;
     have_energy_advisory_ = true;
     std::cout << "[policy_engine] Received EnergyAdvisory mode=" << static_cast<int32_t>(advisory.suggested_mode)
               << " reason=" << advisory.advisory_reason << std::endl;
-    evaluate_and_publish();
+    if (changed)
+    {
+        evaluate_and_publish();
+    }
 }
 
 void PolicyEngineNode::on_edge_gateway_status_received(
