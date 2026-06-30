@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+IMAGE="safe-edge-server:fast-test"
+LOG_DIR="${SCRIPT_DIR}/logs"
+LOG_FILE="${LOG_DIR}/launch_fast_server_test.log"
+
+usage() {
+    cat <<EOF
+Usage: bash launch_fast_server_test.sh [-h|--help]
+
+Runs the FastDDS server integration test inside a Docker container.
+Builds the test image first if it is not already present.
+
+The test binary spawns safe_edge_server as a subprocess and exercises it
+via DDS on the loopback interface. No external services are required.
+
+Log file: scripts/logs/launch_fast_server_test.log
+EOF
+}
+
+for arg in "$@"; do
+    case "${arg}" in
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown option: ${arg}" >&2; usage >&2; exit 1 ;;
+    esac
+done
+
+mkdir -p "${LOG_DIR}"
+
+if ! docker image inspect "${IMAGE}" > /dev/null 2>&1; then
+    echo "[launch_fast_server_test] Image ${IMAGE} not found — building..."
+    bash "${SCRIPT_DIR}/build_ubuntu.sh" --tests
+fi
+
+# Remove stale FastDDS shared-memory artifacts that can cause false failures.
+sudo rm -f /dev/shm/fastdds_* /dev/shm/sem.fastdds_* 2>/dev/null || true
+
+echo "[launch_fast_server_test] Running server integration test..."
+echo "[launch_fast_server_test] Log: ${LOG_FILE}"
+
+set +e
+docker run --rm --network host "${IMAGE}" 2>&1 | tee "${LOG_FILE}"
+TEST_EXIT=${PIPESTATUS[0]}
+set -e
+
+if [[ ${TEST_EXIT} -eq 0 ]]; then
+    echo "[launch_fast_server_test] PASSED"
+else
+    echo "[launch_fast_server_test] FAILED (exit ${TEST_EXIT})" >&2
+fi
+
+exit "${TEST_EXIT}"

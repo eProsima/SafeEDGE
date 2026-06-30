@@ -139,6 +139,51 @@ static void remove_config()
     ::unlink(CONFIG_PATH);
 }
 
+static void run_single_response_server(
+        uint16_t port,
+        const std::string& status_line,
+        const std::string& body)
+{
+    const int srv = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (srv < 0)
+    {
+        return;
+    }
+
+    const int opt = 1;
+    ::setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    struct sockaddr_in addr{};
+    addr.sin_family      = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port        = htons(port);
+
+    if (::bind(srv, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0)
+    {
+        ::close(srv);
+        return;
+    }
+    ::listen(srv, 1);
+
+    const int conn = ::accept(srv, nullptr, nullptr);
+    if (conn >= 0)
+    {
+        char buf[4096];
+        ::recv(conn, buf, sizeof(buf), 0);
+
+        const std::string response =
+            status_line + "\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: " + std::to_string(body.size()) + "\r\n"
+            "Connection: close\r\n"
+            "\r\n" + body;
+        ::send(conn, response.c_str(), response.size(), 0);
+        ::close(conn);
+    }
+
+    ::close(srv);
+}
+
 TEST(PilotServerClientTest, MissingConfigFile)
 {
     remove_config();
@@ -170,41 +215,7 @@ TEST(PilotServerClientTest, SuccessPathMockServer)
 
     std::thread server_thread([&]()
     {
-        const int srv = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (srv < 0) { return; }
-
-        const int opt = 1;
-        ::setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-
-        struct sockaddr_in addr{};
-        addr.sin_family      = AF_INET;
-        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        addr.sin_port        = htons(PORT);
-
-        if (::bind(srv, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0)
-        {
-            ::close(srv);
-            return;
-        }
-        ::listen(srv, 1);
-
-        const int conn = ::accept(srv, nullptr, nullptr);
-        if (conn >= 0)
-        {
-            char buf[4096];
-            ::recv(conn, buf, sizeof(buf), 0);
-
-            const std::string body = BODY;
-            const std::string response =
-                "HTTP/1.1 200 OK\r\n"
-                "Content-Type: application/json\r\n"
-                "Content-Length: " + std::to_string(body.size()) + "\r\n"
-                "Connection: close\r\n"
-                "\r\n" + body;
-            ::send(conn, response.c_str(), response.size(), 0);
-            ::close(conn);
-        }
-        ::close(srv);
+        run_single_response_server(PORT, "HTTP/1.1 200 OK", BODY);
     });
 
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -219,6 +230,102 @@ TEST(PilotServerClientTest, SuccessPathMockServer)
 
     EXPECT_FALSE(result.empty());
     EXPECT_NE(std::string::npos, result.find("Mock"));
+}
+
+TEST(PilotServerClientTest, AvailabilityReturnsFalseWhenConnectionFails)
+{
+    static constexpr uint16_t PORT = 18100U;
+
+    write_config("[pilot_server]\napi_key = testkey\n");
+    PilotServerClient client(
+        "http://127.0.0.1:" + std::to_string(PORT), CONFIG_PATH);
+
+    EXPECT_FALSE(client.is_pilot_server_available());
+    remove_config();
+}
+
+TEST(PilotServerClientTest, AvailabilityReturnsTrueOn200WithBody)
+{
+    static constexpr uint16_t PORT = 18101U;
+    static const char* const BODY =
+        R"([{"id":1,"name":"Mock","latitude":1.0,"longitude":2.0}])";
+
+    std::thread server_thread([&]()
+    {
+        run_single_response_server(PORT, "HTTP/1.1 200 OK", BODY);
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    write_config("[pilot_server]\napi_key = testkey\n");
+    PilotServerClient client(
+        "http://127.0.0.1:" + std::to_string(PORT), CONFIG_PATH);
+
+    EXPECT_TRUE(client.is_pilot_server_available());
+    remove_config();
+    server_thread.join();
+}
+
+TEST(PilotServerClientTest, AvailabilityReturnsFalseOn200WithEmptyBody)
+{
+    static constexpr uint16_t PORT = 18102U;
+
+    std::thread server_thread([&]()
+    {
+        run_single_response_server(PORT, "HTTP/1.1 200 OK", "");
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    write_config("[pilot_server]\napi_key = testkey\n");
+    PilotServerClient client(
+        "http://127.0.0.1:" + std::to_string(PORT), CONFIG_PATH);
+
+    EXPECT_FALSE(client.is_pilot_server_available());
+    remove_config();
+    server_thread.join();
+}
+
+TEST(PilotServerClientTest, AvailabilityReturnsFalseOn404)
+{
+    static constexpr uint16_t PORT = 18103U;
+    static const char* const BODY = R"({"error":"not found"})";
+
+    std::thread server_thread([&]()
+    {
+        run_single_response_server(PORT, "HTTP/1.1 404 Not Found", BODY);
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    write_config("[pilot_server]\napi_key = testkey\n");
+    PilotServerClient client(
+        "http://127.0.0.1:" + std::to_string(PORT), CONFIG_PATH);
+
+    EXPECT_FALSE(client.is_pilot_server_available());
+    remove_config();
+    server_thread.join();
+}
+
+TEST(PilotServerClientTest, AvailabilityReturnsFalseOn500)
+{
+    static constexpr uint16_t PORT = 18104U;
+    static const char* const BODY = R"({"error":"internal"})";
+
+    std::thread server_thread([&]()
+    {
+        run_single_response_server(PORT, "HTTP/1.1 500 Internal Server Error", BODY);
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    write_config("[pilot_server]\napi_key = testkey\n");
+    PilotServerClient client(
+        "http://127.0.0.1:" + std::to_string(PORT), CONFIG_PATH);
+
+    EXPECT_FALSE(client.is_pilot_server_available());
+    remove_config();
+    server_thread.join();
 }
 
 // ============================================================================

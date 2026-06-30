@@ -81,6 +81,7 @@ private:
     bool enable_entities();
 
     void on_server_query_received(const safe_edge::pilot_server::ServerQuery& query);
+    void check_pilot_server_liveliness() noexcept;
     void publish_heartbeat();
 
     void request_pilot_server_data(safe_edge::pilot_server::RequestedDataType resource) noexcept;
@@ -99,8 +100,10 @@ private:
 
     std::chrono::steady_clock::time_point next_heartbeat_fire_;
     std::chrono::steady_clock::time_point next_refresh_fire_;
+    std::chrono::steady_clock::time_point next_server_liveliness_fire_;
     std::chrono::steady_clock::time_point next_uptime_fire_;
     std::chrono::steady_clock::time_point start_time_;
+    bool pilot_server_available_ = true;
 
     eprosima::fastdds::dds::DomainParticipant* participant_ = nullptr;
     eprosima::fastdds::dds::Publisher* publisher_ = nullptr;

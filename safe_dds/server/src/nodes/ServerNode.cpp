@@ -186,6 +186,7 @@ ServerNode::ServerNode(
     , heartbeat_timer_({5, 0})
     , refresh_timer_({30, 0})
     , uptime_timer_({300, 0})
+    , check_server_liveliness_timer_({2, 500000000})
     , start_time_(std::chrono::steady_clock::now())
 {
 }
@@ -207,6 +208,7 @@ int ServerNode::run()
     heartbeat_timer_.start();
     refresh_timer_.start();
     uptime_timer_.start();
+    check_server_liveliness_timer_.start();
 
     std::cout << "[server] [START] Running with participant port " << runtime_config_.participant_port << std::endl;
     std::cout << "[server] PilotServer base_url=" << runtime_config_.pilot_server_base_url
@@ -219,12 +221,17 @@ int ServerNode::run()
             executor_->spin(eprosima::safedds::execution::TIME_ZERO);
         }
 
-        if (heartbeat_timer_.is_triggered_and_reset())
+        if (check_server_liveliness_timer_.is_triggered_and_reset())
+        {
+            check_pilot_server_liveliness();
+        }
+
+        if (heartbeat_timer_.is_triggered_and_reset() && pilot_server_available_)
         {
             publish_heartbeat();
         }
 
-        if (refresh_timer_.is_triggered_and_reset())
+        if (refresh_timer_.is_triggered_and_reset() && pilot_server_available_)
         {
             periodic_refresh_all_resources();
         }
@@ -503,6 +510,17 @@ void ServerNode::log_uptime() const noexcept
     std::cout << "[server] Uptime=" << seconds << "s" << std::endl;
 }
 
+void ServerNode::check_pilot_server_liveliness() noexcept
+{
+    const bool reachable = pilot_client_.is_pilot_server_available();
+    if (pilot_server_available_ != reachable)
+    {
+        std::cout << "[server] Pilot server availability changed: available="
+                  << (reachable ? "true" : "false") << std::endl;
+    }
+    pilot_server_available_ = reachable;
+}
+
 void ServerNode::publish_heartbeat()
 {
     safe_edge::common::ServiceHeartbeat heartbeat{};
@@ -527,6 +545,7 @@ eprosima::safedds::execution::TimePoint ServerNode::next_wakeup_time() const noe
     next = eprosima::safedds::execution::TimePoint::min(next, heartbeat_timer_.next_trigger());
     next = eprosima::safedds::execution::TimePoint::min(next, refresh_timer_.next_trigger());
     next = eprosima::safedds::execution::TimePoint::min(next, uptime_timer_.next_trigger());
+    next = eprosima::safedds::execution::TimePoint::min(next, check_server_liveliness_timer_.next_trigger());
     return next;
 }
 
