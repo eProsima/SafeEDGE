@@ -1,4 +1,4 @@
-name: Private CI (Git Permissions)
+name: SafeEDGE CI
 
 # Simplified variant:
 #   - no gate job
@@ -78,13 +78,6 @@ jobs:
       - name: Test - Fast DDS edge
         run: bash scripts/launch_fast_edge.sh --test
 
-      - name: Clear - Docker Images
-        run: |
-          docker stop safe_edge_server:fast || true
-          docker stop safe_edge_edge:fast || true
-          docker rmi -f safe-edge-server:fast || true
-          docker rmi -f safe-edge-edge:fast || true
-
       - name: Test - TPI 2.1
         run: bash scripts/launch_tpi_2_1_test.sh --linux --no-rebuild
 
@@ -99,3 +92,22 @@ jobs:
 
       - name: Test - TPI 2.6
         run: bash scripts/launch_tpi_2_6_test.sh --linux --no-rebuild
+
+      - name: Test - TPI 3.1
+        run: bash scripts/launch_tpi_3_1_test.sh --linux --no-rebuild
+
+      - name: Test - TPI 3.2
+        run: bash scripts/launch_tpi_3_2_test.sh --linux --no-rebuild
+
+      - name: Test - TPI 3.3
+        run: bash scripts/launch_tpi_3_3_test.sh --linux --no-rebuild
+
+      - name: Clear - Docker
+        if: always()
+        run: |
+          docker stop safe-edge-server 2>/dev/null || true
+          docker rm -f safe-edge-server 2>/dev/null || true
+          docker stop safe-edge-edge 2>/dev/null || true
+          docker rm -f safe-edge-edge 2>/dev/null || true
+          docker stop safe-edge-vehicle 2>/dev/null || true
+          docker rm -f safe-edge-vehicle 2>/dev/null || true

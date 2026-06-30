@@ -1,0 +1,518 @@
+#!/usr/bin/env bash
+# TPI 3.2 — Low-SoC Policy Transition
+# Starts safety + non-safety (QNX VM or native Linux) + edge + server (Docker),
+# injects a SafetyInputFrame with SoC below threshold, and verifies the
+# conservative PolicyDecision and charger request/response flow.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/test_output_common.sh"
+
+QNX_USER="${USER:-$(id -un)}"
+: "${QNX_SDP_ROOT:=/home/${QNX_USER}/qnx800}"
+: "${QNX_ARCH:=x86_64}"
+: "${CMAKE_BUILD_TYPE:=Release}"
+: "${TARGET_DIR:=${WORKSPACE_ROOT}/qnx/targets/qemu-qnx800-${QNX_ARCH}}"
+: "${SAFETY_BIN_DIR:=${WORKSPACE_ROOT}/safe_dds/install/safety-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}/bin}"
+: "${NON_SAFETY_BIN_DIR:=${WORKSPACE_ROOT}/safe_dds/install/non-safety-qnx8-${QNX_ARCH}-${CMAKE_BUILD_TYPE}/bin}"
+: "${SAFETY_NATIVE_BIN_DIR:=${WORKSPACE_ROOT}/safe_dds/install/safety-native-${CMAKE_BUILD_TYPE}/bin}"
+: "${NON_SAFETY_NATIVE_BIN_DIR:=${WORKSPACE_ROOT}/safe_dds/install/non-safety-native-${CMAKE_BUILD_TYPE}/bin}"
+: "${DISCOVERY_WAIT_SECS:=15}"
+: "${NOMINAL_WAIT_SECS:=10}"
+: "${PROPAGATION_WAIT_SECS:=20}"
+
+# SoC threshold in PolicyEngine is 20.0
+HIGH_SOC_VALUE="80.0"
+LOW_SOC_VALUE="5.0"
+
+LOG_DIR="${SCRIPT_DIR}/logs"
+RUNTIME_DIR="${LOG_DIR}/tpi_3_2_runtime"
+
+_SSH_PASS="root"
+_SSH_USER="root"
+_SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30 -o LogLevel=ERROR"
+
+TEST_PLATFORM="qnx"
+OPT_NO_REBUILD=0
+OPT_STOP=0
+
+SAFETY_BINS=(safe_edge_safety_io_adapters safe_edge_policy_engine safe_edge_vehicle_mock)
+NON_SAFETY_BINS=(safe_edge_infotainment safe_edge_cloud_gateway)
+VEHICLE_BINS=("${NON_SAFETY_BINS[@]}" "${SAFETY_BINS[@]}")
+
+VM_IP=""
+CHILD_PIDS=()
+LOW_SOC_FILE=""
+
+usage() {
+    cat <<EOF
+Usage: bash scripts/launch_tpi_3_2_test.sh [--linux|--ubuntu] [--no-rebuild] [--stop] [-h]
+
+  --linux        Run native Linux binaries (no QNX VM); CI-friendly
+  --ubuntu       Alias for --linux
+  --no-rebuild   Skip QNX image rebuild
+  --stop         Stop running VM/processes and exit
+
+Environment variables:
+  DISCOVERY_WAIT_SECS   seconds to wait for DDS convergence (default: 15)
+  PROPAGATION_WAIT_SECS seconds to wait for Low-SoC propagation (default: 20)
+  QNX_SDP_ROOT / QNX_ARCH / CMAKE_BUILD_TYPE / TARGET_DIR
+EOF
+}
+
+for arg in "$@"; do
+    case "${arg}" in
+        --linux|--ubuntu) TEST_PLATFORM="linux" ;;
+        --no-rebuild) OPT_NO_REBUILD=1 ;;
+        --stop)       OPT_STOP=1 ;;
+        -h|--help)    usage; exit 0 ;;
+        *) echo "Unknown option: ${arg}" >&2; usage >&2; exit 1 ;;
+    esac
+done
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+_ssh_run() {
+    local host="$1"; shift
+    sshpass -p "${_SSH_PASS}" ssh ${_SSH_OPTS} "${_SSH_USER}@${host}" "$@"
+}
+
+_host_bin_path() {
+    local name="$1"
+    case "${name}" in
+        safe_edge_safety_io_adapters|safe_edge_policy_engine|safe_edge_vehicle_mock)
+            echo "${SAFETY_NATIVE_BIN_DIR}/${name}" ;;
+        *)
+            echo "${NON_SAFETY_NATIVE_BIN_DIR}/${name}" ;;
+    esac
+}
+
+_get_ip_address() {
+    local ip i
+    for ((i = 0; i < 20; i++)); do
+        set +e; ip="$(mkqnximage --getip 2>/dev/null)"; set -e
+        [[ -n "${ip}" ]] && { echo "${ip}"; return 0; }
+        sleep 2
+    done
+    echo "Timed out waiting for VM IP." >&2; return 1
+}
+
+_get_linux_host_ip() {
+    local ip=""
+    set +e
+    ip="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; ++i) if ($i == "src") { print $(i + 1); exit }}')"
+    set -e
+    if [[ -z "${ip}" ]]; then
+        set +e
+        ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+        set -e
+    fi
+    [[ -n "${ip}" ]] && echo "${ip}"
+}
+
+_detect_docker_network_mode() {
+    [[ "${TEST_PLATFORM}" == "linux" ]] || return 0
+    [[ -f "/.dockerenv" ]] || return 0
+    local runner_hostname
+    runner_hostname="$(hostname 2>/dev/null)" || return 0
+    [[ -n "${runner_hostname}" ]] || return 0
+    echo "Containerized runner detected; using --network container:${runner_hostname} for Docker containers"
+    export SAFE_EDGE_DOCKER_NETWORK="container:${runner_hostname}"
+}
+
+_wait_for_container_running() {
+    local name="$1" timeout="$2"
+    local deadline=$(( $(date +%s) + timeout ))
+    until docker ps -q --filter "name=^${name}$" | grep -q .; do
+        if [[ $(date +%s) -gt ${deadline} ]]; then
+            test_error "${name} did not start within ${timeout}s"
+            exit 1
+        fi
+        sleep 2
+    done
+}
+
+_start_vehicle_nodes() {
+    local name
+
+    if [[ "${TEST_PLATFORM}" == "linux" ]]; then
+        local safety_env non_safety_env
+        safety_env=(
+            "SAFE_EDGE_OWN_IP=${PEER_SAFETY_IP}"
+            "SAFE_EDGE_CROSS_DOMAIN_IP=${PEER_NON_SAFETY_IP}"
+            "SAFE_EDGE_HOST_IP=${DOCKER_OWN_IP}"
+            "SAFE_EDGE_INITIAL_PEERS=${PEER_SAFETY_IP}:8001,${PEER_SAFETY_IP}:8002,${PEER_NON_SAFETY_IP}:8011,${DOCKER_OWN_IP}:8020,${DOCKER_OWN_IP}:8030"
+        )
+        non_safety_env=(
+            "SAFE_EDGE_OWN_IP=${PEER_NON_SAFETY_IP}"
+            "SAFE_EDGE_CROSS_DOMAIN_IP=${PEER_SAFETY_IP}"
+            "SAFE_EDGE_HOST_IP=${DOCKER_OWN_IP}"
+            "SAFE_EDGE_INITIAL_PEERS=${PEER_SAFETY_IP}:8001,${PEER_SAFETY_IP}:8002,${PEER_NON_SAFETY_IP}:8011,${DOCKER_OWN_IP}:8020,${DOCKER_OWN_IP}:8030"
+        )
+        rm -f "${RUNTIME_DIR}"/*.pid
+        env "${non_safety_env[@]}" "${NON_SAFETY_NATIVE_BIN_DIR}/safe_edge_infotainment" > "${RUNTIME_DIR}/safe_edge_infotainment.log" 2>&1 &
+        CHILD_PIDS+=($!); echo $! > "${RUNTIME_DIR}/safe_edge_infotainment.pid"
+        sleep 1
+        env "${non_safety_env[@]}" "${NON_SAFETY_NATIVE_BIN_DIR}/safe_edge_cloud_gateway" > "${RUNTIME_DIR}/safe_edge_cloud_gateway.log" 2>&1 &
+        CHILD_PIDS+=($!); echo $! > "${RUNTIME_DIR}/safe_edge_cloud_gateway.pid"
+        env "${safety_env[@]}" "${SAFETY_NATIVE_BIN_DIR}/safe_edge_safety_io_adapters" > "${RUNTIME_DIR}/safe_edge_safety_io_adapters.log" 2>&1 &
+        CHILD_PIDS+=($!); echo $! > "${RUNTIME_DIR}/safe_edge_safety_io_adapters.pid"
+        env "${safety_env[@]}" "${SAFETY_NATIVE_BIN_DIR}/safe_edge_policy_engine" > "${RUNTIME_DIR}/safe_edge_policy_engine.log" 2>&1 &
+        CHILD_PIDS+=($!); echo $! > "${RUNTIME_DIR}/safe_edge_policy_engine.pid"
+        # vehicle_mock gets the Low-SoC input file
+        env "${safety_env[@]}" "SAFE_EDGE_INPUT_FILE=${LOW_SOC_FILE}" "${SAFETY_NATIVE_BIN_DIR}/safe_edge_vehicle_mock" > "${RUNTIME_DIR}/safe_edge_vehicle_mock.log" 2>&1 &
+        CHILD_PIDS+=($!); echo $! > "${RUNTIME_DIR}/safe_edge_vehicle_mock.pid"
+        return 0
+    fi
+
+    # QNX VM mode
+    local _peers="${VM_IP}:8001,${VM_IP}:8002,${VM_IP}:8011,${BRIDGE_IP}:8020,${BRIDGE_IP}:8030"
+    local _env="SAFE_EDGE_OWN_IP=${VM_IP} SAFE_EDGE_HOST_IP=${BRIDGE_IP} SAFE_EDGE_INITIAL_PEERS=${_peers}"
+
+    # Copy Low-SoC file to VM
+    sshpass -p "${_SSH_PASS}" scp ${_SSH_OPTS} "${LOW_SOC_FILE}" "${_SSH_USER}@${VM_IP}:/tmp/low_soc_input.txt" 2>/dev/null || true
+
+    local cmd="mkdir -p /tmp/tpi_3_2; rm -f /tmp/tpi_3_2/*.pid /tmp/tpi_3_2/*.log;"
+    cmd+=" ${_env} /system/bin/safe_edge_infotainment > /tmp/tpi_3_2/safe_edge_infotainment.log 2>&1 & echo \$! > /tmp/tpi_3_2/safe_edge_infotainment.pid;"
+    cmd+=" sleep 1;"
+    cmd+=" ${_env} /system/bin/safe_edge_cloud_gateway > /tmp/tpi_3_2/safe_edge_cloud_gateway.log 2>&1 & echo \$! > /tmp/tpi_3_2/safe_edge_cloud_gateway.pid;"
+    cmd+=" ${_env} /system/bin/safe_edge_safety_io_adapters > /tmp/tpi_3_2/safe_edge_safety_io_adapters.log 2>&1 & echo \$! > /tmp/tpi_3_2/safe_edge_safety_io_adapters.pid;"
+    cmd+=" ${_env} /system/bin/safe_edge_policy_engine > /tmp/tpi_3_2/safe_edge_policy_engine.log 2>&1 & echo \$! > /tmp/tpi_3_2/safe_edge_policy_engine.pid;"
+    cmd+=" ${_env} SAFE_EDGE_INPUT_FILE=/tmp/low_soc_input.txt /system/bin/safe_edge_vehicle_mock > /tmp/tpi_3_2/safe_edge_vehicle_mock.log 2>&1 & echo \$! > /tmp/tpi_3_2/safe_edge_vehicle_mock.pid;"
+    _ssh_run "${VM_IP}" "${cmd}"
+}
+
+_stop_vehicle_nodes() {
+    if [[ "${TEST_PLATFORM}" == "linux" ]]; then
+        local f
+        for f in "${RUNTIME_DIR}"/*.pid; do
+            [[ -f "${f}" ]] || continue
+            kill "$(cat "${f}")" 2>/dev/null || true
+        done
+        return 0
+    fi
+    [[ -z "${VM_IP}" ]] && return 0
+    _ssh_run "${VM_IP}" \
+        "for f in /tmp/tpi_3_2/*.pid; do [ -f \"\$f\" ] || continue; kill \"\$(cat \"\$f\")\" 2>/dev/null || true; done" \
+        >/dev/null 2>&1 || true
+}
+
+_collect_vehicle_logs() {
+    local name tmp
+    if [[ "${TEST_PLATFORM}" == "linux" ]]; then
+        return 0
+    fi
+    for name in "${VEHICLE_BINS[@]}"; do
+        tmp="$(mktemp)"
+        if _ssh_run "${VM_IP}" "cat /tmp/tpi_3_2/${name}.log 2>/dev/null" > "${tmp}" 2>/dev/null; then
+            cp "${tmp}" "${RUNTIME_DIR}/${name}.log"
+        fi
+        rm -f "${tmp}"
+    done
+}
+
+_stop_all() {
+    _stop_vehicle_nodes 2>/dev/null || true
+    local pid
+    for pid in "${CHILD_PIDS[@]+"${CHILD_PIDS[@]}"}"; do
+        kill "${pid}" 2>/dev/null || true
+    done
+    echo "Stopping safe-edge-edge..."
+    docker stop safe-edge-edge   2>/dev/null || true
+    echo "Stopping safe-edge-server..."
+    docker stop safe-edge-server 2>/dev/null || true
+    [[ -n "${LOW_SOC_FILE:-}" ]] && rm -f "${LOW_SOC_FILE}" || true
+}
+
+trap '_stop_all' EXIT
+
+_inject_low_soc() {
+    echo "soc=${LOW_SOC_VALUE}" > "${LOW_SOC_FILE}"
+    if [[ "${TEST_PLATFORM}" == "qnx" ]]; then
+        sshpass -p "${_SSH_PASS}" scp ${_SSH_OPTS} "${LOW_SOC_FILE}" \
+            "${_SSH_USER}@${VM_IP}:/tmp/low_soc_input.txt" 2>/dev/null || true
+    fi
+}
+
+# ── Early stop mode ───────────────────────────────────────────────────────────
+
+if [[ "${OPT_STOP}" -eq 1 ]]; then
+    _stop_all
+    exit 0
+fi
+
+# ── Setup ─────────────────────────────────────────────────────────────────────
+
+mkdir -p "${RUNTIME_DIR}"
+LAUNCHER_LOG="${RUNTIME_DIR}/launch_tpi_3_2.log"
+exec > >(tee "${LAUNCHER_LOG}") 2>&1
+test_banner_open "TPI 3.2 - Low SoC Policy Transition"
+test_banner_context "${TEST_PLATFORM}" "${RUNTIME_DIR}"
+echo "Logs: ${RUNTIME_DIR}"
+echo "Platform: ${TEST_PLATFORM}"
+echo "Low-SoC injection: soc=${LOW_SOC_VALUE} (threshold=20.0)"
+
+# ── QNX SDK setup ─────────────────────────────────────────────────────────────
+
+if [[ "${TEST_PLATFORM}" == "qnx" ]]; then
+    [[ -f "${QNX_SDP_ROOT}/qnxsdp-env.sh" ]] || { echo "QNX SDK not found: ${QNX_SDP_ROOT}" >&2; exit 1; }
+    # shellcheck source=/dev/null
+    # qnxsdp-env.sh overrides SCRIPT_DIR — save and restore it
+    _SAVED_SCRIPT_DIR="${SCRIPT_DIR}"
+    source "${QNX_SDP_ROOT}/qnxsdp-env.sh" >/dev/null 2>&1
+    SCRIPT_DIR="${_SAVED_SCRIPT_DIR}"
+    [[ -d "${TARGET_DIR}" ]]                  || { echo "QNX target dir not found: ${TARGET_DIR}" >&2; exit 1; }
+    command -v sshpass    >/dev/null 2>&1 || { echo "sshpass not found" >&2; exit 1; }
+    command -v mkqnximage >/dev/null 2>&1 || { echo "mkqnximage not found" >&2; exit 1; }
+    mkdir -p "${TARGET_DIR}/local/snippets" "${TARGET_DIR}/local/misc_files"
+fi
+
+# ── QNX VM boot ───────────────────────────────────────────────────────────────
+
+if [[ "${TEST_PLATFORM}" == "qnx" ]]; then
+    cd "${TARGET_DIR}"
+    kill "$(pgrep -f qemu-system-x86_64)" 2>/dev/null || true
+
+    if [[ "${OPT_NO_REBUILD}" -eq 0 ]]; then
+        echo "Building QNX image..."
+        mkqnximage --noprompt --run=-h --clean >/dev/null 2>&1
+        echo "Building QNX image... done"
+    else
+        echo "Starting QNX QEMU (skipping rebuild)..."
+        mkqnximage --noprompt --run=-h >/dev/null 2>&1
+        echo "Starting QNX QEMU... done"
+    fi
+
+    echo "Waiting for VM IP..."
+    VM_IP="$(_get_ip_address)"
+    echo "VM IP: ${VM_IP}"
+    cd "${SCRIPT_DIR}/.."
+fi
+
+BRIDGE_IP="127.0.0.1"
+if ip addr show virbr0 >/dev/null 2>&1; then
+    BRIDGE_IP="$(ip -o -f inet addr show virbr0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
+    [[ -z "${BRIDGE_IP}" ]] && BRIDGE_IP="127.0.0.1"
+else
+    echo "virbr0 not found; falling back to ${BRIDGE_IP}"
+fi
+
+if [[ "${TEST_PLATFORM}" == "linux" ]]; then
+    LINUX_HOST_IP="$(_get_linux_host_ip)"
+    if [[ -z "${LINUX_HOST_IP}" ]]; then
+        echo "Could not resolve primary Linux host IP; falling back to 127.0.0.1"
+        LINUX_HOST_IP="127.0.0.1"
+    fi
+    PEER_SAFETY_IP="${LINUX_HOST_IP}"
+    PEER_NON_SAFETY_IP="${LINUX_HOST_IP}"
+    DOCKER_OWN_IP="${LINUX_HOST_IP}"
+else
+    PEER_SAFETY_IP="${VM_IP}"
+    PEER_NON_SAFETY_IP="${VM_IP}"
+    DOCKER_OWN_IP="${BRIDGE_IP}"
+fi
+echo "Topology: safety=${PEER_SAFETY_IP} non_safety=${PEER_NON_SAFETY_IP} docker=${DOCKER_OWN_IP}"
+
+# ── Start Docker containers ───────────────────────────────────────────────────
+
+_detect_docker_network_mode
+
+test_info "Starting safe-edge-server"
+SAFE_EDGE_OWN_IP="${DOCKER_OWN_IP}" \
+SAFE_EDGE_NON_SAFETY_IP="${PEER_NON_SAFETY_IP}" \
+SAFE_EDGE_INITIAL_PEERS="${PEER_NON_SAFETY_IP}:8011,${DOCKER_OWN_IP}:8030" \
+    bash "${SCRIPT_DIR}/launch_fast_server.sh" > "${RUNTIME_DIR}/safe_edge_server_launcher.log" 2>&1 &
+CHILD_PIDS+=($!)
+
+deadline=$(( $(date +%s) + 30 ))
+until docker ps -q --filter "name=^safe-edge-server$" | grep -q .; do
+    if [[ $(date +%s) -gt ${deadline} ]]; then
+        test_error "safe-edge-server did not start within 30s"; exit 1
+    fi
+    sleep 2
+done
+
+test_info "Starting safe-edge-edge (5s delay)"
+sleep 5
+SAFE_EDGE_OWN_IP="${DOCKER_OWN_IP}" \
+SAFE_EDGE_SAFETY_IP="${PEER_SAFETY_IP}" \
+SAFE_EDGE_NON_SAFETY_IP="${PEER_NON_SAFETY_IP}" \
+SAFE_EDGE_INITIAL_PEERS="${PEER_SAFETY_IP}:8001,${PEER_SAFETY_IP}:8002,${PEER_NON_SAFETY_IP}:8011,${DOCKER_OWN_IP}:8020" \
+    bash "${SCRIPT_DIR}/launch_fast_edge.sh" > "${RUNTIME_DIR}/safe_edge_edge_launcher.log" 2>&1 &
+CHILD_PIDS+=($!)
+
+deadline=$(( $(date +%s) + 30 ))
+until docker ps -q --filter "name=^safe-edge-edge$" | grep -q .; do
+    if [[ $(date +%s) -gt ${deadline} ]]; then
+        test_error "safe-edge-edge did not start within 30s"; exit 1
+    fi
+    sleep 2
+done
+
+# ── Create SOC input file (starts HIGH) ──────────────────────────────────────
+
+LOW_SOC_FILE="$(mktemp)"
+echo "soc=${HIGH_SOC_VALUE}" > "${LOW_SOC_FILE}"
+echo "SOC input file: ${LOW_SOC_FILE} (initial soc=${HIGH_SOC_VALUE})"
+
+# ── Start vehicle nodes ───────────────────────────────────────────────────────
+
+test_info "Starting vehicle nodes (initial soc=${HIGH_SOC_VALUE})"
+_start_vehicle_nodes
+
+pe_log="${RUNTIME_DIR}/safe_edge_policy_engine.log"
+cg_log="${RUNTIME_DIR}/safe_edge_cloud_gateway.log"
+vm_log="${RUNTIME_DIR}/safe_edge_vehicle_mock.log"
+edge_log="${RUNTIME_DIR}/docker_safe_edge_edge.log"
+
+# ── DDS convergence wait ──────────────────────────────────────────────────────
+
+test_info "Waiting ${DISCOVERY_WAIT_SECS}s for DDS discovery"
+sleep "${DISCOVERY_WAIT_SECS}"
+
+# ── Evidence checks (helpers) ─────────────────────────────────────────────────
+
+PASS_COUNT=0
+FAIL_COUNT=0
+TOTAL_COUNT=0
+
+_check() {
+    local label="$1" file="$2" pattern="$3"
+    TOTAL_COUNT=$(( TOTAL_COUNT + 1 ))
+    echo "[ RUN      ] ${label}"
+    if grep -qE "${pattern}" "${file}" 2>/dev/null; then
+        echo "[       OK ] ${label}"
+        PASS_COUNT=$(( PASS_COUNT + 1 ))
+    else
+        echo "[  FAILED  ] ${label}"
+        FAIL_COUNT=$(( FAIL_COUNT + 1 ))
+    fi
+}
+
+_check_absent() {
+    local label="$1" file="$2" pattern="$3"
+    TOTAL_COUNT=$(( TOTAL_COUNT + 1 ))
+    echo "[ RUN      ] ${label}"
+    if ! grep -qE "${pattern}" "${file}" 2>/dev/null; then
+        echo "[       OK ] ${label}"
+        PASS_COUNT=$(( PASS_COUNT + 1 ))
+    else
+        echo "[  FAILED  ] ${label}"
+        FAIL_COUNT=$(( FAIL_COUNT + 1 ))
+    fi
+}
+
+# ── Phase 1: High SoC — verify nominal policy ─────────────────────────────────
+
+echo "Waiting ${NOMINAL_WAIT_SECS}s for nominal policy publication (soc=${HIGH_SOC_VALUE})..."
+sleep "${NOMINAL_WAIT_SECS}"
+
+_collect_vehicle_logs
+docker logs safe-edge-server > "${RUNTIME_DIR}/docker_safe_edge_server.log" 2>&1 || true
+docker logs safe-edge-edge   > "${RUNTIME_DIR}/docker_safe_edge_edge.log"   2>&1 || true
+
+echo ""
+echo "[----------] TPI 3.2 — Phase 1: High SoC baseline (soc=${HIGH_SOC_VALUE})"
+echo ""
+
+_check "stack is up: vehicle_mock publishing" \
+    "${vm_log}" "Published SafetyInputFrame"
+
+_check "stack is up: policy_engine receiving" \
+    "${pe_log}" "Received SafetyInputFrame"
+
+_check "policy published a decision with high SoC" \
+    "${pe_log}" "Published PolicyDecision"
+
+_check_absent "policy decision is not low_soc with high SoC" \
+    "${pe_log}" "Published PolicyDecision.*mode=2"
+
+# ── Transition: inject Low SoC ────────────────────────────────────────────────
+
+echo ""
+echo "Injecting low SoC (soc=${LOW_SOC_VALUE}, threshold=20.0)..."
+_inject_low_soc
+echo "Low SoC injected"
+
+# ── Phase 2: Wait for low_soc PolicyDecision ─────────────────────────────────
+
+: "${LOW_SOC_TIMEOUT_SECS:=60}"
+echo "Waiting for low_soc PolicyDecision (timeout ${LOW_SOC_TIMEOUT_SECS}s)..."
+_deadline=$(( $(date +%s) + LOW_SOC_TIMEOUT_SECS ))
+until grep -qE "Published PolicyDecision.*mode=2" "${pe_log}" 2>/dev/null; do
+    if [[ $(date +%s) -gt ${_deadline} ]]; then
+        test_error "low_soc PolicyDecision did not appear within ${LOW_SOC_TIMEOUT_SECS}s"
+        test_warn "Failure diagnostics: policy tail"
+        grep "Published PolicyDecision" "${pe_log}" 2>/dev/null | tail -5 || test_warn "none"
+        test_warn "Failure diagnostics: policy server availability count = $(n=$(grep -c 'Received ServerAvailabilityStatus' "${pe_log}" 2>/dev/null); echo "${n:-0}")"
+        test_warn "Failure diagnostics: policy heartbeat count = $(n=$(grep -c 'Received.*ServiceHeartbeat\|ServiceHeartbeat.*received' "${pe_log}" 2>/dev/null); echo "${n:-0}")"
+        test_warn "Failure diagnostics: cloud tail"
+        grep -E "server_up|server_lost|ServerAvailability|Received.*ServiceHeartbeat|Forwarding" "${cg_log}" 2>/dev/null | tail -5 || test_warn "none"
+        test_warn "Failure diagnostics: docker server tail"
+        docker logs safe-edge-server 2>&1 | tail -5 || true
+        break
+    fi
+    sleep 2
+done
+echo "low_soc PolicyDecision confirmed (or timeout)"
+
+echo "Waiting ${PROPAGATION_WAIT_SECS}s for charging flow to complete..."
+sleep "${PROPAGATION_WAIT_SECS}"
+echo "Propagation window done"
+
+echo "Collecting logs..."
+_collect_vehicle_logs
+docker logs safe-edge-server > "${RUNTIME_DIR}/docker_safe_edge_server.log" 2>&1 || true
+docker logs safe-edge-edge   > "${RUNTIME_DIR}/docker_safe_edge_edge.log"   2>&1 || true
+echo "Logs collected in ${RUNTIME_DIR}"
+
+echo ""
+echo "[----------] TPI 3.2 — Phase 2: Low-SoC Policy Transition (soc=${LOW_SOC_VALUE})"
+echo ""
+
+_check "vehicle_mock published low-SoC SafetyInputFrame" \
+    "${vm_log}" "Published SafetyInputFrame"
+
+_check "policy_engine received low-SoC SafetyInputFrame" \
+    "${pe_log}" "Received SafetyInputFrame"
+
+_check "SafetyInputFrame SoC below threshold" \
+    "${pe_log}" "soc=${LOW_SOC_VALUE}|soc=5[^0-9]"
+
+_check "PolicyDecision transitions to low_soc (mode=2)" \
+    "${pe_log}" "Published PolicyDecision.*mode=2"
+
+_check "PolicyDecision reason=battery_soc_below_threshold" \
+    "${pe_log}" "battery_soc_below_threshold|low_soc"
+
+_check "Published ChargingQuery" \
+    "${pe_log}" "Published ChargingQuery"
+
+_check "cloud_gateway received ChargingQuery" \
+    "${cg_log}" "Received ChargingQuery"
+
+_check "cloud_gateway forwarding to server" \
+    "${cg_log}" "Forwarding query to server"
+
+_check "cloud_gateway published ChargingResponse" \
+    "${cg_log}" "Published ChargingResponse"
+
+_check "policy_engine received ChargingResponse" \
+    "${pe_log}" "Received ChargingResponse"
+
+_check "ChargingResponse contains charger data" \
+    "${pe_log}" "Received ChargingResponse has_charger="
+
+echo ""
+echo "[----------] ${TOTAL_COUNT} tests from TPI 3.2"
+echo "[  PASSED  ] ${PASS_COUNT} / ${TOTAL_COUNT}"
+if [[ "${FAIL_COUNT}" -gt 0 ]]; then
+    echo "[  FAILED  ] ${FAIL_COUNT} tests."
+    test_footer "TPI 3.2 - Low SoC Policy Transition" "${FAIL_COUNT}" "${RUNTIME_DIR}"
+    exit ${FAIL_COUNT}
+fi
+echo ""
+test_artifact "Evidence directory" "${RUNTIME_DIR}"
+test_footer "TPI 3.2 - Low SoC Policy Transition" 0 "${RUNTIME_DIR}"
+exit 0
