@@ -121,6 +121,7 @@ ServerNode::ServerNode(
     , server_query_listener_(*this)
     , next_heartbeat_fire_(std::chrono::steady_clock::now() + std::chrono::milliseconds(100))
     , next_refresh_fire_(std::chrono::steady_clock::now() + std::chrono::seconds(30))
+    , next_server_liveliness_fire_(std::chrono::steady_clock::now() + std::chrono::milliseconds(2500))
     , next_uptime_fire_(std::chrono::steady_clock::now() + std::chrono::seconds(300))
     , start_time_(std::chrono::steady_clock::now())
     , charger_location_type_support_(new safe_edge::pilot_server::ChargerLocationPubSubType())
@@ -143,17 +144,23 @@ int ServerNode::run()
 
     while (true)
     {
-        const auto next = std::min({next_heartbeat_fire_, next_refresh_fire_, next_uptime_fire_});
+        const auto next = std::min(
+            {next_heartbeat_fire_, next_refresh_fire_, next_server_liveliness_fire_, next_uptime_fire_});
         std::this_thread::sleep_until(next);
 
         const auto now = std::chrono::steady_clock::now();
 
-        if (now >= next_heartbeat_fire_)
+        if (now >= next_server_liveliness_fire_)
+        {
+            check_pilot_server_liveliness();
+            next_server_liveliness_fire_ += std::chrono::milliseconds(2500);
+        }
+        if (now >= next_heartbeat_fire_ && pilot_server_available_)
         {
             publish_heartbeat();
             next_heartbeat_fire_ += std::chrono::milliseconds(100);
         }
-        if (now >= next_refresh_fire_)
+        if (now >= next_refresh_fire_ && pilot_server_available_)
         {
             periodic_refresh_all_resources();
             next_refresh_fire_ += std::chrono::seconds(30);
@@ -476,6 +483,17 @@ void ServerNode::log_uptime() const noexcept
     const auto elapsed = std::chrono::steady_clock::now() - start_time_;
     const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
     std::cout << "[server] Uptime=" << seconds << "s" << std::endl;
+}
+
+void ServerNode::check_pilot_server_liveliness() noexcept
+{
+    const bool reachable = pilot_client_.is_pilot_server_available();
+    if (pilot_server_available_ != reachable)
+    {
+        std::cout << "[server] Pilot server availability changed: available="
+                  << (reachable ? "true" : "false") << std::endl;
+    }
+    pilot_server_available_ = reachable;
 }
 
 void ServerNode::publish_heartbeat()
