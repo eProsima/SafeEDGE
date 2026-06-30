@@ -91,7 +91,7 @@ jobs:
         run: bash scripts/launch_tpi_2_5_test.sh --linux --no-rebuild
 
       - name: Test - TPI 2.6
-        run: bash scripts/launch_tpi_2_6_test.sh --linux --no-rebuild
+        run: bash scripts/launch_tpi_2_6_test.sh --linux --no-rebuild --warmup 100
 
       - name: Test - TPI 3.1
         run: bash scripts/launch_tpi_3_1_test.sh --linux --no-rebuild

@@ -26,6 +26,7 @@ _SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o Connec
 OPT_NO_REBUILD=0
 OPT_STOP=0
 OPT_SAMPLES=100
+OPT_WARMUP=0
 OPT_LOAD=0
 OPT_PRIO=0
 OPT_LINUX=0
@@ -65,6 +66,7 @@ Options:
   --linux             run native Linux binaries instead of a QNX VM
   --ubuntu            alias for --linux
   --samples N         number of measurement samples (default: ${OPT_SAMPLES})
+  --warmup N          warmup cycles to discard before measuring (default: ${OPT_WARMUP})
   --load LEVEL        load level: 0=baseline, 1=medium (CPU), 2=high (CPU+I/O) (default: ${OPT_LOAD})
   --prio              start VM + nodes, print thread priorities via pidin, then exit
   --stop              stop a running VM and exit
@@ -99,6 +101,13 @@ while [[ $# -gt 0 ]]; do
             OPT_SAMPLES="$2"
             shift 2
             ;;
+        --warmup)
+            if [[ $# -lt 2 ]]; then
+                echo "--warmup requires a value" >&2; exit 1
+            fi
+            OPT_WARMUP="$2"
+            shift 2
+            ;;
         --load)
             if [[ $# -lt 2 ]]; then
                 echo "--load requires a value" >&2; exit 1
@@ -131,6 +140,9 @@ fi
 
 if [[ ! "${OPT_SAMPLES}" =~ ^[0-9]+$ || "${OPT_SAMPLES}" -lt 1 ]]; then
     echo "Invalid --samples value: ${OPT_SAMPLES}" >&2; exit 1
+fi
+if [[ ! "${OPT_WARMUP}" =~ ^[0-9]+$ ]]; then
+    echo "Invalid --warmup value: ${OPT_WARMUP}" >&2; exit 1
 fi
 if [[ ! "${OPT_LOAD}" =~ ^[012]$ ]]; then
     echo "Invalid --load value: ${OPT_LOAD} (must be 0, 1, or 2)" >&2; exit 1
@@ -467,8 +479,14 @@ _run_measurement_loop() {
         _dump_node_diagnostics "${ip}"
         return 1
     }
-    test_info "Collecting ${OPT_SAMPLES} samples"
+    if [[ "${OPT_WARMUP}" -gt 0 ]]; then
+        test_info "Warmup: ${OPT_WARMUP} cycles (discarded)"
+        for ((i = 1; i <= OPT_WARMUP; i++)); do
+            _trigger_sample_cycle "${ip}"
+        done
+    fi
 
+    test_info "Collecting ${OPT_SAMPLES} samples"
     for ((i = 1; i <= OPT_SAMPLES; i++)); do
         _trigger_sample_cycle "${ip}"
         if (( i % 10 == 0 )); then test_info "${i}/${OPT_SAMPLES} samples collected"; fi
@@ -538,7 +556,7 @@ _generate_report() {
     else
         environment_label="QNX 8.0 / QEMU x86_64"
     fi
-    python3 - "${RAW_LOG}" "${REPORT}" "${OPT_SAMPLES}" "${E2E_THRESHOLD_MS}" "${REACTION_THRESHOLD_MS}" "${environment_label}" <<'PYEOF'
+    python3 - "${RAW_LOG}" "${REPORT}" "${OPT_SAMPLES}" "${E2E_THRESHOLD_MS}" "${REACTION_THRESHOLD_MS}" "${environment_label}" "${OPT_WARMUP}" <<'PYEOF'
 import sys
 import re
 
@@ -548,6 +566,7 @@ n_samples   = int(sys.argv[3])
 e2e_limit   = float(sys.argv[4])
 rxn_limit   = float(sys.argv[5])
 environment = sys.argv[6]
+n_warmup    = int(sys.argv[7]) if len(sys.argv) > 7 else 0
 
 def parse_ts(s, ns):
     return int(s) * 1_000_000_000 + int(ns)
@@ -576,8 +595,8 @@ pe_dec_re = re.compile(
 with open(raw_log) as f:
     lines = f.readlines()
 
-e2e_samples = []
-rxn_samples = []
+e2e_samples_all = []
+rxn_samples_all = []
 
 i = 0
 while i < len(lines):
@@ -594,7 +613,7 @@ while i < len(lines):
             j += 1
         if dec_m is not None:
             t_rx_dec = parse_ts(dec_m.group(1), dec_m.group(2))
-            e2e_samples.append(ns_to_ms(t_rx_dec - t_pub))
+            e2e_samples_all.append(ns_to_ms(t_rx_dec - t_pub))
         i += 1
     else:
         # Reaction time: policy_engine receive → policy_engine publish
@@ -610,7 +629,7 @@ while i < len(lines):
                 k += 1
             if pdec_m is not None:
                 t_dec = parse_ts(pdec_m.group(1), pdec_m.group(2))
-                rxn_samples.append(ns_to_ms(t_dec - t_rx))
+                rxn_samples_all.append(ns_to_ms(t_dec - t_rx))
             i = k + 1
         else:
             i += 1
@@ -637,6 +656,9 @@ def stats(data):
         'p99': percentile(data, 99),
         'max': max(data),
     }
+
+e2e_samples = e2e_samples_all[n_warmup:]
+rxn_samples = rxn_samples_all[n_warmup:]
 
 e2e_st = stats(e2e_samples)
 rxn_st = stats(rxn_samples)

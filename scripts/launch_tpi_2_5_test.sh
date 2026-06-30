@@ -568,7 +568,7 @@ _run_liveliness_test_case() {
         fi
     else
         service_name="$(_service_name_for_bin "${name}")"
-        hb_line="Received ServiceHeartbeat service=${service_name} status=HEALTH_OK detail=running"
+        hb_line="[infotainment] Heartbeat service=${service_name} status=HEALTH_OK"
 
         if _wait_for_remote_file_contains "${ip}" "${node_log}" "Published ServiceHeartbeat" 8 1; then
             echo "[dds] Published ServiceHeartbeat found"
