@@ -385,7 +385,7 @@ TEST(RealPilotServerTest, ChargingSessionsReturnsData)
     }
 
     PilotServerClient client(PILOT_SERVER_BASE_URL, PILOT_SERVER_INI_PATH);
-    const std::string body = client.fetch(CHARGING_SESSIONS_EP);
+    const std::string body = client.fetch(CHARGING_SESSIONS_EP, 8192, 15000);
 
     skip_if_degraded_real_response(body, CHARGING_SESSIONS_EP, "station_id");
 

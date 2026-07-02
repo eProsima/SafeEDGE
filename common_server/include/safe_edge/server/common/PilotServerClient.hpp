@@ -18,7 +18,12 @@ public:
     // Executes HTTP GET base_url + endpoint with Authorization: Bearer <api_key>.
     // Returns the response body on success, empty string on any error.
     // The api_key never appears in any log output.
-    std::string fetch(const std::string& endpoint) noexcept;
+    // max_bytes: stop download after this many bytes (0 = unlimited).
+    // timeout_ms: total transfer timeout in ms (0 = use default).
+    std::string fetch(
+            const std::string& endpoint,
+            size_t max_bytes = 0,
+            long timeout_ms = 0) noexcept;
 
     // Returns true only when the pilot server responds successfully with usable data.
     bool is_pilot_server_available() noexcept;

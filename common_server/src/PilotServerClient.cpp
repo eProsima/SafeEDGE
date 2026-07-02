@@ -16,11 +16,22 @@ static constexpr long CURL_CONNECT_TIMEOUT_MS = 1000L;
 static constexpr long CURL_TOTAL_TIMEOUT_MS = 2000L;
 static constexpr const char* PILOT_SERVER_AVAILABILITY_ENDPOINT = "/api/chargers/locations";
 
+struct WriteCtx
+{
+    std::string* body;
+    size_t       max_bytes; // 0 = unlimited
+};
+
 static size_t write_callback(void* ptr, size_t size, size_t nmemb, void* userdata)
 {
-    static_cast<std::string*>(userdata)->append(
-        static_cast<const char*>(ptr), size * nmemb);
-    return size * nmemb;
+    auto* ctx = static_cast<WriteCtx*>(userdata);
+    const size_t incoming = size * nmemb;
+    if (ctx->max_bytes > 0 && ctx->body->size() >= ctx->max_bytes)
+    {
+        return 0; // trigger CURLE_WRITE_ERROR to abort transfer
+    }
+    ctx->body->append(static_cast<const char*>(ptr), incoming);
+    return incoming;
 }
 
 } // namespace
@@ -47,7 +58,16 @@ bool PilotServerClient::load_api_key(
     std::ifstream file(ini_path);
     if (!file.is_open())
     {
-        std::cerr << "[pilot_client] Cannot open config file: " << ini_path << std::endl;
+        // Fallback: read from PILOT_API_KEY environment variable.
+        const char* env_key = std::getenv("PILOT_API_KEY");
+        if (env_key != nullptr && env_key[0] != '\0')
+        {
+            api_key_ = env_key;
+            std::cout << "[pilot_client] api_key loaded from PILOT_API_KEY env var" << std::endl;
+            return true;
+        }
+        std::cerr << "[pilot_client] Cannot open config file: " << ini_path
+                  << " and PILOT_API_KEY env var is not set" << std::endl;
         return false;
     }
 
@@ -114,7 +134,9 @@ bool PilotServerClient::load_api_key(
 }
 
 std::string PilotServerClient::fetch(
-        const std::string& endpoint) noexcept
+        const std::string& endpoint,
+        size_t max_bytes,
+        long timeout_ms) noexcept
 {
     if (!ready_)
     {
@@ -135,13 +157,15 @@ std::string PilotServerClient::fetch(
     struct curl_slist* headers = curl_slist_append(nullptr, auth.c_str());
 
     std::string body;
+    WriteCtx ctx{&body, max_bytes};
 
     curl_easy_setopt(curl, CURLOPT_URL,           url.c_str());
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER,    headers);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA,     &body);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA,     &ctx);
+    const long effective_timeout = (timeout_ms > 0) ? timeout_ms : CURL_TOTAL_TIMEOUT_MS;
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, CURL_CONNECT_TIMEOUT_MS);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS,        CURL_TOTAL_TIMEOUT_MS);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS,        effective_timeout);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
 
@@ -150,7 +174,8 @@ std::string PilotServerClient::fetch(
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
-    if (res != CURLE_OK)
+    // CURLE_WRITE_ERROR means our callback aborted after hitting max_bytes — body is valid.
+    if (res != CURLE_OK && !(res == CURLE_WRITE_ERROR && !body.empty()))
     {
         std::cerr << "[pilot_client] GET " << endpoint
                   << " failed: " << curl_easy_strerror(res) << std::endl;
@@ -180,13 +205,14 @@ bool PilotServerClient::is_pilot_server_available() noexcept
     const std::string auth = "X-API-KEY: " + api_key_;
     struct curl_slist* headers = curl_slist_append(nullptr, auth.c_str());
     std::string body;
+    WriteCtx ctx{&body, 0};
 
     const std::string url = base_url_ + PILOT_SERVER_AVAILABILITY_ENDPOINT;
 
     curl_easy_setopt(curl, CURLOPT_URL,             url.c_str());
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER,      headers);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,   write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA,       &body);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA,       &ctx);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, CURL_CONNECT_TIMEOUT_MS);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS,        CURL_TOTAL_TIMEOUT_MS);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER,  0L);

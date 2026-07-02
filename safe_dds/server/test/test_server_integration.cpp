@@ -36,6 +36,7 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -52,6 +53,104 @@ static bool init_peers()
 static const bool PEERS_INIT = init_peers();
 static const char* SERVER_PID_FILE = "/tmp/safe_edge_server_test.pid";
 static const char* SERVER_LOG_FILE = "/tmp/safe_edge_server_test.log";
+static const char* SERVER_INI_PATH = "/etc/safe-edge/server.ini";
+static bool g_server_ini_created_by_test = false;
+
+static bool pilot_server_config_ready()
+{
+    std::ifstream file(SERVER_INI_PATH);
+    if (!file.is_open())
+    {
+        return false;
+    }
+
+    bool in_section = false;
+    std::string line;
+    while (std::getline(file, line))
+    {
+        const size_t start = line.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos || line[start] == '#' || line[start] == ';')
+        {
+            continue;
+        }
+
+        const std::string trimmed = line.substr(start);
+        if (trimmed == "[pilot_server]")
+        {
+            in_section = true;
+            continue;
+        }
+        if (trimmed[0] == '[')
+        {
+            in_section = false;
+            continue;
+        }
+
+        if (!in_section)
+        {
+            continue;
+        }
+
+        const size_t eq = trimmed.find('=');
+        if (eq == std::string::npos)
+        {
+            continue;
+        }
+
+        const std::string raw_key = trimmed.substr(0, eq);
+        const size_t key_end = raw_key.find_last_not_of(" \t");
+        const std::string key = (key_end != std::string::npos)
+            ? raw_key.substr(0, key_end + 1) : raw_key;
+        if (key != "api_key")
+        {
+            continue;
+        }
+
+        const std::string raw_val = trimmed.substr(eq + 1);
+        const size_t val_start = raw_val.find_first_not_of(" \t");
+        if (val_start == std::string::npos)
+        {
+            return false;
+        }
+
+        const size_t val_end = raw_val.find_last_not_of(" \t\r\n");
+        return val_end != std::string::npos && val_end >= val_start;
+    }
+
+    return false;
+}
+
+static bool ensure_pilot_server_config_available()
+{
+    if (pilot_server_config_ready())
+    {
+        return true;
+    }
+
+    const char* api_key = std::getenv("PILOT_API_KEY");
+    if (nullptr == api_key || api_key[0] == '\0')
+    {
+        return false;
+    }
+
+    const int mkdir_rc = std::system("mkdir -p /etc/safe-edge");
+    if (mkdir_rc != 0)
+    {
+        return false;
+    }
+
+    std::ofstream file(SERVER_INI_PATH);
+    if (!file.is_open())
+    {
+        return false;
+    }
+
+    file << "[pilot_server]\napi_key = " << api_key << "\n";
+    file.close();
+
+    g_server_ini_created_by_test = pilot_server_config_ready();
+    return g_server_ini_created_by_test;
+}
 
 static eprosima::safedds::dds::DomainParticipant* make_participant(
         eprosima::safedds::dds::DomainParticipantFactory& factory,
@@ -101,6 +200,11 @@ class ServerEnvironment : public ::testing::Environment
 public:
     void SetUp() override
     {
+        ASSERT_TRUE(ensure_pilot_server_config_available())
+            << "Missing pilot server configuration. "
+               "Use host file " << SERVER_INI_PATH
+            << " or provide PILOT_API_KEY in the environment.";
+
         const char* bin = std::getenv("SAFE_EDGE_SERVER_BIN");
         const std::string server_bin = (bin != nullptr ? bin : "safe_edge_server");
         const std::string cmd =
@@ -136,6 +240,12 @@ public:
             "'";
         const int stop_rc = std::system(stop_cmd.c_str());
         (void)stop_rc;
+        if (g_server_ini_created_by_test)
+        {
+            const int rm_rc = std::remove(SERVER_INI_PATH);
+            (void)rm_rc;
+            g_server_ini_created_by_test = false;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 };

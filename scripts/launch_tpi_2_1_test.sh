@@ -295,6 +295,13 @@ echo "Waiting for SSH..."
 _wait_for_ssh "${VM_IP}"
 echo "VM is reachable."
 
+if [[ -f /etc/safe-edge/server.ini ]]; then
+    _ssh_run "${VM_IP}" "mkdir -p /etc/safe-edge" 2>/dev/null || true
+    sshpass -p "${_SSH_PASS}" scp ${_SSH_OPTS} \
+        /etc/safe-edge/server.ini \
+        "${_SSH_USER}@${VM_IP}:/etc/safe-edge/server.ini" 2>/dev/null || true
+fi
+
 test_section "Running test_server_integration on QNX"
 
 TEST_RC=0
