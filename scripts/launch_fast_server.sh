@@ -94,6 +94,14 @@ DOCKER_ENV_ARGS=(
 )
 [[ -n "${SAFE_EDGE_CROSS_DOMAIN_IP:-}" ]] && DOCKER_ENV_ARGS+=(-e "SAFE_EDGE_CROSS_DOMAIN_IP=${SAFE_EDGE_CROSS_DOMAIN_IP}")
 
+# Resolve PILOT_API_KEY: prefer env var, fall back to ini file.
+# Pass it explicitly so the server container gets it regardless of volume availability
+# (Docker-in-Docker runners cannot mount host paths from inside a container).
+if [[ -z "${PILOT_API_KEY:-}" && -f /etc/safe-edge/server.ini ]]; then
+    PILOT_API_KEY="$(grep -m1 'api_key' /etc/safe-edge/server.ini | cut -d'=' -f2 | tr -d ' ')"
+fi
+[[ -n "${PILOT_API_KEY:-}" ]] && DOCKER_ENV_ARGS+=(-e "PILOT_API_KEY=${PILOT_API_KEY}")
+
 CONTAINER_NAME="safe-edge-server"
 docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
 

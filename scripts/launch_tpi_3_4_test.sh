@@ -253,12 +253,18 @@ _start_fast_stack() {
     rm -f /dev/shm/fastdds_* /dev/shm/sem.fastdds_* 2>/dev/null || true
     docker rm -f "${SERVER_CONTAINER}" "${EDGE_CONTAINER}" 2>/dev/null || true
 
+    local server_extra_args=()
+    if [[ -d /etc/safe-edge ]]; then
+        server_extra_args+=(-v /etc/safe-edge:/etc/safe-edge:ro)
+    fi
+
     docker run -d \
         --name "${SERVER_CONTAINER}" \
         --network host \
         -e "SAFE_EDGE_OWN_IP=${host_ip}" \
         -e "SAFE_EDGE_NON_SAFETY_IP=${guest_ip}" \
         -e "SAFE_EDGE_INITIAL_PEERS=${guest_ip}:8011,${host_ip}:8030" \
+        "${server_extra_args[@]+"${server_extra_args[@]}"}" \
         safe-edge-server:fast >/dev/null
 
     docker run -d \

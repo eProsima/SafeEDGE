@@ -18,6 +18,8 @@ PORT        = int(os.environ.get("SAFE_EDGE_WEB_PORT", "8080"))
 HOST_IP     = os.environ.get("SAFE_EDGE_HOST_IP", "127.0.0.1")
 GUEST_IP    = os.environ.get("SAFE_EDGE_GUEST_IP", HOST_IP)
 PLATFORM    = os.environ.get("SAFE_EDGE_PLATFORM", "linux")
+SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
+LOGO_PATH   = os.path.join(SCRIPT_DIR, "eProsima_logo.png")
 
 STATUS_POLL_HZ = 4
 _status_cache: bytes = b""
@@ -340,10 +342,15 @@ HTML = r"""<!DOCTYPE html>
 
   .ok  { color: #1a7f37; }
   .err { color: #cf222e; }
+  .header-row { display: flex; align-items: center; justify-content: center; gap: 1em; margin-bottom: 0.6em; }
+  .header-logo { max-height: 3.2em; width: auto; }
 </style>
 </head>
 <body>
-<h1>SafeEDGE System Dashboard</h1>
+<div class="header-row">
+  <img class="header-logo" src="/assets/eprosima-logo.png" alt="eProsima" onerror="this.style.display='none'">
+  <h1>SafeEDGE System Dashboard</h1>
+</div>
 
 <div class="topology">
 
@@ -809,6 +816,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == "/" or self.path == "/index.html":
             page = HTML.replace("%(status_file)s", STATUS_FILE)
             self._send(200, "text/html; charset=utf-8", page)
+        elif self.path == "/assets/eprosima-logo.png":
+            try:
+                with open(LOGO_PATH, "rb") as f:
+                    self._send(200, "image/png", f.read())
+            except OSError:
+                self._send(404, "text/plain", "Not found")
         elif self.path == "/status":
             with _status_lock:
                 data = _status_cache
@@ -889,13 +902,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._send(200, "text/plain", "OK")
             elif action == "start_server":
                 subprocess.run(["docker", "rm", "-f", "safe-edge-server"], timeout=5, check=False)
-                subprocess.run([
+                pilot_key = os.environ.get("PILOT_API_KEY", "")
+                if not pilot_key:
+                    try:
+                        import configparser
+                        cfg = configparser.ConfigParser()
+                        cfg.read("/etc/safe-edge/server.ini")
+                        pilot_key = cfg.get("pilot_server", "api_key", fallback="")
+                    except Exception:
+                        pass
+                server_cmd = [
                     "docker", "run", "-d", "--name", "safe-edge-server", "--network", "host",
                     "-e", f"SAFE_EDGE_OWN_IP={HOST_IP}",
                     "-e", f"SAFE_EDGE_NON_SAFETY_IP={GUEST_IP}",
                     "-e", f"SAFE_EDGE_INITIAL_PEERS={GUEST_IP}:8011,{HOST_IP}:8030",
-                    "safe-edge-server:fast",
-                ], timeout=10, check=False)
+                ]
+                if pilot_key:
+                    server_cmd += ["-e", f"PILOT_API_KEY={pilot_key}"]
+                elif os.path.isdir("/etc/safe-edge"):
+                    server_cmd += ["-v", "/etc/safe-edge:/etc/safe-edge:ro"]
+                server_cmd.append("safe-edge-server:fast")
+                subprocess.run(server_cmd, timeout=10, check=False)
                 self._send(200, "text/plain", "OK")
             elif action == "stop_edge":
                 subprocess.run(["docker", "rm", "-f", "safe-edge-edge"], timeout=5, check=False)
