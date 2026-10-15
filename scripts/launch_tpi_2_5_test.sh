@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/test_output_common.sh"
 LOG_DIR="${SCRIPT_DIR}/logs"
 LOG_FILE="${LOG_DIR}/launch_tpi_2_5.log"
 
@@ -196,7 +197,7 @@ _wait_for_ssh() {
             return 0
         fi
         if (( i == 1 || i % 5 == 0 )); then
-            echo "  waiting for SSH (${i}/${max_tries})..."
+            test_info "waiting for SSH (${i}/${max_tries})..."
         fi
         sleep 2
     done
@@ -207,8 +208,7 @@ _wait_for_ssh() {
 
 _print_section() {
     local title="$1"
-    echo
-    echo "===== ${title} ====="
+    test_section "${title}"
 }
 
 _find_conflicting_qemu_targets() {
@@ -546,24 +546,24 @@ _run_liveliness_test_case() {
     echo "[ RUN      ] ${test_name}"
 
     if _remote_pid_is_running "${ip}" "${name}"; then
-        echo "    [proc] pid exists and process is alive"
+        echo "[proc] pid exists and process is alive"
     else
-        echo "    [proc] FAIL pid missing or process not alive"
+        echo "[proc] FAIL pid missing or process not alive"
         failed=1
     fi
 
     if [[ "${name}" == "safe_edge_infotainment" ]]; then
         if _wait_for_remote_file_contains "${ip}" "${infotainment_log}" "Published ServiceHeartbeat" 8 1; then
-            echo "    [dds]  Published ServiceHeartbeat found"
+            echo "[dds] Published ServiceHeartbeat found"
         else
-            echo "    [dds]  FAIL Published ServiceHeartbeat not found"
+            echo "[dds] FAIL Published ServiceHeartbeat not found"
             failed=1
         fi
     elif [[ "${name}" == "safe_edge_vehicle_mock" ]]; then
         if _remote_file_nonempty "${ip}" "${node_log}"; then
-            echo "    [dds]  node log is not empty"
+            echo "[dds] node log is not empty"
         else
-            echo "    [dds]  FAIL node log is empty"
+            echo "[dds] FAIL node log is empty"
             failed=1
         fi
     else
@@ -571,16 +571,16 @@ _run_liveliness_test_case() {
         hb_line="Received ServiceHeartbeat service=${service_name} status=HEALTH_OK detail=running"
 
         if _wait_for_remote_file_contains "${ip}" "${node_log}" "Published ServiceHeartbeat" 8 1; then
-            echo "    [dds]  Published ServiceHeartbeat found"
+            echo "[dds] Published ServiceHeartbeat found"
         else
-            echo "    [dds]  FAIL Published ServiceHeartbeat not found"
+            echo "[dds] FAIL Published ServiceHeartbeat not found"
             failed=1
         fi
 
         if _wait_for_remote_file_contains "${ip}" "${infotainment_log}" "${hb_line}" 8 1; then
-            echo "    [dds]  infotainment received heartbeat from ${service_name}"
+            echo "[dds] infotainment received heartbeat from ${service_name}"
         else
-            echo "    [dds]  FAIL infotainment did not receive heartbeat from ${service_name}"
+            echo "[dds] FAIL infotainment did not receive heartbeat from ${service_name}"
             failed=1
         fi
     fi
@@ -645,6 +645,9 @@ _test_smoke_logs() {
 
 _prepare_local_target_dirs
 
+test_banner_open "TPI 2.5 - Startup and Liveliness"
+test_banner_context "${TEST_PLATFORM}" "${LOG_FILE}"
+
 if [[ "${TEST_PLATFORM}" == "qnx" ]]; then
     CONFLICTING_QEMU_TARGETS="$(_find_conflicting_qemu_targets)"
     if [[ -n "${CONFLICTING_QEMU_TARGETS}" ]]; then
@@ -705,9 +708,8 @@ else
     echo "Running native Linux mode. No QNX image will be built."
 fi
 
-echo "Starting vehicle nodes..."
+test_info "Starting vehicle nodes"
 _start_vehicle_nodes "${VM_IP}"
-echo "Vehicle nodes launched."
 
 TEST_RC=0
 _test_nodes_launch_and_stay_alive "${VM_IP}" || TEST_RC=1
@@ -719,4 +721,7 @@ if [[ "${TEST_PLATFORM}" == "qnx" ]]; then
     mkqnximage --stop 2>/dev/null || true
 fi
 
+test_artifact "Launcher log" "${LOG_FILE}"
+test_artifact "Runtime logs" "${RUNTIME_DIR}"
+test_footer "TPI 2.5 - Startup and Liveliness" "${TEST_RC}" "${RUNTIME_DIR}"
 exit "${TEST_RC}"

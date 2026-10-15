@@ -99,7 +99,7 @@ docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
 
 DOCKER_ARGS=(
     --name "${CONTAINER_NAME}"
-    --network host
+    --network "${SAFE_EDGE_DOCKER_NETWORK:-host}"
     "${DOCKER_ENV_ARGS[@]}"
 )
 

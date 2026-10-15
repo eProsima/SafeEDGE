@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/test_output_common.sh"
 LOG_DIR="${SCRIPT_DIR}/logs"
 LOG_FILE="${LOG_DIR}/launch_tpi_2_2.log"
 
@@ -90,6 +91,9 @@ if [[ "${OPT_LINUX}" -eq 1 ]]; then
         exit 0
     fi
 
+    test_banner_open "TPI 2.2 - Edge Integration"
+    test_banner_context "linux" "${LOG_FILE}"
+
     pkill -f "safe_edge_edge_gateway" 2>/dev/null || true
 
     for bin in \
@@ -103,22 +107,14 @@ if [[ "${OPT_LINUX}" -eq 1 ]]; then
         _validate_linux_binary "${bin}"
     done
 
-    echo ""
-    echo "Running test_edge_integration on Linux..."
-    echo "---------------------------------------------"
+    test_section "Running test_edge_integration on Linux"
 
     TEST_RC=0
     SAFE_EDGE_EDGE_BIN="${EDGE_BIN_DIR}/safe_edge_edge_gateway" \
         "${EDGE_BIN_DIR}/test_edge_integration" || TEST_RC=$?
 
-    echo "---------------------------------------------"
-    if [[ "${TEST_RC}" -eq 0 ]]; then
-        echo "PASSED"
-    else
-        echo "FAILED (exit code ${TEST_RC})"
-        exit "${TEST_RC}"
-    fi
-    exit 0
+    test_footer "TPI 2.2 - Edge Integration" "${TEST_RC}" "${LOG_FILE}"
+    exit "${TEST_RC}"
 fi
 
 if [[ ! -f "${QNX_SDP_ROOT}/qnxsdp-env.sh" ]]; then
@@ -253,6 +249,9 @@ _prepare_local_target_dirs() {
 _prepare_local_target_dirs
 cd "${TARGET_DIR}"
 
+test_banner_open "TPI 2.2 - Edge Integration"
+test_banner_context "qnx" "${LOG_FILE}"
+
 if [[ "${OPT_STOP}" -eq 1 ]]; then
     echo "Stopping QNX VM..."
     mkqnximage --stop 2>/dev/null || true
@@ -296,23 +295,15 @@ echo "Waiting for SSH..."
 _wait_for_ssh "${VM_IP}"
 echo "VM is reachable."
 
-echo ""
-echo "Running test_edge_integration on QNX..."
-echo "---------------------------------------------"
+test_section "Running test_edge_integration on QNX"
 
 TEST_RC=0
 _ssh_run "${VM_IP}" \
     "SAFE_EDGE_EDGE_BIN=/system/bin/safe_edge_edge_gateway /system/bin/test_edge_integration" \
     || TEST_RC=$?
 
-echo "---------------------------------------------"
-echo ""
 echo "Stopping QNX VM..."
 mkqnximage --stop 2>/dev/null || true
 
-if [[ "${TEST_RC}" -eq 0 ]]; then
-    echo "PASSED"
-else
-    echo "FAILED (exit code ${TEST_RC})"
-    exit "${TEST_RC}"
-fi
+test_footer "TPI 2.2 - Edge Integration" "${TEST_RC}" "${LOG_FILE}"
+exit "${TEST_RC}"

@@ -556,6 +556,7 @@ bool CloudGatewayNode::create_endpoints()
         eprosima::safedds::dds::NONE_STATUS_MASK);
     server_query_writer_ = downcast_writer<safe_edge::pilot_server::ServerQueryTypeSupport>(server_query_datawriter_);
 
+    writer_qos.durability().kind = eprosima::safedds::dds::DurabilityQosPolicyKind::TRANSIENT_LOCAL_DURABILITY_QOS;
     server_availability_status_datawriter_ = publisher_->create_datawriter(
         *server_availability_status_topic_,
         writer_qos,

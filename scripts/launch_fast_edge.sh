@@ -92,4 +92,4 @@ docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
 echo "[edge] Starting safe_edge_edge_gateway (Ctrl+C to stop)"
 echo "[edge] OWN_IP=${SAFE_EDGE_OWN_IP} INITIAL_PEERS=${SAFE_EDGE_INITIAL_PEERS}"
 
-exec docker run --name "${CONTAINER_NAME}" --network host "${DOCKER_ENV_ARGS[@]}" "${IMAGE}"
+exec docker run --name "${CONTAINER_NAME}" --network "${SAFE_EDGE_DOCKER_NETWORK:-host}" "${DOCKER_ENV_ARGS[@]}" "${IMAGE}"

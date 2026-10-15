@@ -565,12 +565,14 @@ bool PolicyEngineNode::create_endpoints()
         reader_qos,
         &charging_response_listener_,
         eprosima::safedds::dds::DATA_AVAILABLE_STATUS);
+    reader_qos.durability().kind = eprosima::safedds::dds::DurabilityQosPolicyKind::TRANSIENT_LOCAL_DURABILITY_QOS;
     server_availability_status_datareader_ = subscriber_->create_datareader(
         *server_availability_status_topic_,
         reader_qos,
         &server_availability_status_listener_,
         eprosima::safedds::dds::DATA_AVAILABLE_STATUS);
     server_availability_status_reader_ = downcast_reader<safe_edge::internal::ServerAvailabilityStatusTypeSupport>(server_availability_status_datareader_);
+    reader_qos.durability().kind = eprosima::safedds::dds::DurabilityQosPolicyKind::VOLATILE_DURABILITY_QOS;
 
     edge_charger_response_datareader_ = subscriber_->create_datareader(
         *edge_charger_response_topic_,

@@ -299,7 +299,7 @@ protected:
             {
                 const bool is_ok =
                     sample.status == safe_edge::common::HealthStatus::HEALTH_OK;
-                std::cout << "  [dds] EdgeGatewayStatus="
+                std::cout << "[dds] EdgeGatewayStatus="
                           << (is_ok ? "OK" : "DEGRADED") << "\n";
                 if (sample.status == expected)
                 {
@@ -417,7 +417,7 @@ TEST_F(MockServerFixture, EdgeTransitionsOkToDegraded)
                 sample.status == safe_edge::common::HealthStatus::HEALTH_OK)
         {
             ok_seen = true;
-            std::cout << "  [dds] EdgeGatewayStatus=OK\n";
+            std::cout << "[dds] EdgeGatewayStatus=OK\n";
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
@@ -502,7 +502,7 @@ TEST(EdgePublishesStatusPeriodically, AtLeastTwoSamplesIn15Seconds)
                 eprosima::safedds::dds::ReturnCode::OK && info.valid_data)
         {
             ++count;
-            std::cout << "  [dds] Status sample #" << count << "\n";
+            std::cout << "[dds] Status sample #" << count << "\n";
         }
         else
         {
